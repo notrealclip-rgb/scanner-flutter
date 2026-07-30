@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Scanner Pro</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='100%25' x2='100%25' y2='0%25'%3E%3Cstop offset='0%25' stop-color='%23f472b6'/%3E%3Cstop offset='100%25' stop-color='%239333ea'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='256' cy='256' r='256' fill='url(%23g)'/%3E%3Cpath fill='%23fff' d='M100 130h40v252h-40zm70 0h30v252h-30zm60 0h50v252h-50zm80 0h30v252h-30zm60 0h42v252h-42z'/%3E%3C/svg%3E">
+
+    <style>
+        body {
+            font-family: 'Nunito', sans-serif;
+            background-color: #121212;
+            color: #f3f4f6;
+            overscroll-behavior-y: none;
+        }
+
+        #reader {
+            width: 100%;
+            border-radius: 1.5rem;
+            overflow: hidden;
+            background: #000;
+            cursor: crosshair;
+        }
+        
+        #reader video {
+            object-fit: cover;
+            border-radius: 1.5rem;
+        }
+        
+        #reader__dashboard_section_csr span, 
+        #reader__dashboard_section_swaplink {
+            display: none !important;
+        }
+
+        .scan-flash {
+            animation: flashAnimation 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes flashAnimation {
+            0% { background-color: rgba(236, 72, 153, 0.6); }
+            100% { background-color: transparent; }
+        }
+
+        .glass-panel {
+            background: rgba(40, 40, 40, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .focus-ring {
+            position: absolute;
+            width: 80px;
+            height: 80px;
+            border: 2px solid #ec4899;
+            border-radius: 50%;
+            pointer-events: none;
+            transform: translate(-50%, -50%) scale(2);
+            opacity: 0;
+            transition: transform 0.3s ease-out, opacity 0.3s ease-out;
+            z-index: 50;
+        }
+        .focus-ring.active {
+            transform: translate(-50%, -50%) scale(1);
+            opacity: 1;
+        }
+        
+        .pb-safe {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col relative overflow-hidden selection:bg-pink-500 selection:text-white">
+
+    <!-- Startup Screen -->
+    <div id="startup-overlay" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md transition-opacity duration-300">
+        <div class="bg-gray-800 p-8 m-4 max-w-sm w-full rounded-[2.5rem] shadow-2xl border border-gray-700 text-center">
+            <div class="w-20 h-20 bg-gradient-to-tr from-pink-500 to-purple-600 rounded-3xl mx-auto mb-6 flex items-center justify-center shadow-2xl rotate-3">
+                <i class="fa-solid fa-barcode text-white text-3xl"></i>
+            </div>
+            <h2 class="text-2xl font-black text-white mb-2">Scanner Pro</h2>
+            <p class="text-gray-400 text-sm mb-8">Gerencie seu inventário de forma rápida e organizada.</p>
+            <div class="space-y-3">
+                <button onclick="handleStartup('continue')" class="w-full bg-pink-500 hover:bg-pink-400 text-white py-4 rounded-2xl font-bold transition flex items-center justify-center gap-3">
+                    <i class="fa-solid fa-rotate-left"></i> Continuar Última Lista
+                </button>
+                <button onclick="handleStartup('new')" class="w-full bg-gray-700 hover:bg-gray-600 text-white py-4 rounded-2xl font-bold transition">
+                    + Iniciar Nova Coleção
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Dialog -->
+    <div id="error-dialog-overlay" class="fixed inset-0 z-[110] hidden flex items-center justify-center bg-black/80 backdrop-blur-sm">
+        <div class="bg-gray-800 p-6 m-4 max-w-sm w-full rounded-3xl shadow-2xl border-2 border-red-500/50">
+            <div class="flex items-center mb-4">
+                <i class="fa-solid fa-triangle-exclamation text-3xl text-red-500 mr-3"></i>
+                <h3 class="text-xl font-extrabold text-red-400" id="error-dialog-title">Alerta</h3>
+            </div>
+            <p class="text-gray-300 text-sm mb-6" id="error-dialog-message"></p>
+            <button onclick="document.getElementById('error-dialog-overlay').classList.add('hidden')" class="w-full bg-red-500 hover:bg-red-400 text-white py-3 rounded-xl font-bold transition">Fechar</button>
+        </div>
+    </div>
+
+    <!-- Collections Menu -->
+    <div id="lists-overlay" class="absolute inset-0 z-50 hidden flex flex-col p-6 transition-all duration-300 backdrop-blur-xl bg-black/90">
+        <div class="flex justify-between items-center mb-8 pt-4">
+            <h2 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500" id="lists-title">Coleções</h2>
+            <button id="close-lists-btn" onclick="toggleListsMenu()" class="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center hover:bg-gray-700 transition">
+                <i class="fa-solid fa-xmark text-xl"></i>
+            </button>
+        </div>
+        
+        <div class="bg-gray-900 p-2 rounded-full border-2 border-gray-700 flex items-center mb-6 focus-within:border-pink-500 transition-colors">
+            <input type="text" id="new-list-name" placeholder="Nome da nova lista..." class="flex-1 bg-transparent border-none text-white px-4 py-2 focus:outline-none placeholder-gray-500 font-semibold">
+            <button onclick="createNewList()" class="bg-pink-500 hover:bg-pink-400 text-white w-10 h-10 rounded-full flex items-center justify-center transition shadow-lg shadow-pink-500/30">
+                <i class="fa-solid fa-plus"></i>
+            </button>
+        </div>
+
+        <div id="lists-container" class="flex-1 overflow-y-auto space-y-3 pb-10"></div>
+    </div>
+
+    <!-- Header -->
+    <div class="px-4 pt-4 pb-2 z-20">
+        <header class="glass-panel rounded-3xl p-3 px-5 flex justify-between items-center shadow-xl">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-pink-500 flex items-center justify-center shadow-lg shadow-pink-500/20">
+                    <i class="fa-solid fa-barcode text-white text-xs"></i>
+                </div>
+                <h1 class="text-lg font-bold">Scanner</h1>
+            </div>
+            <button onclick="exportData()" class="bg-pink-500/10 hover:bg-pink-500/20 text-pink-500 px-4 py-2 rounded-full text-xs font-bold transition flex items-center gap-2 border border-pink-500/30">
+                <i class="fa-solid fa-share-nodes"></i> Exportar
+            </button>
+        </header>
+    </div>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto p-4 space-y-6 pb-28">
+        <div class="flex justify-between items-center px-2">
+            <div class="max-w-[60%]">
+                <div class="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">Lista Ativa</div>
+                <div id="current-list-display" class="text-2xl font-black text-white truncate">...</div>
+            </div>
+            <div class="bg-gray-800/50 px-4 py-2 rounded-2xl border border-gray-800 shadow-inner">
+                <span id="total-count" class="font-mono font-bold text-pink-400 text-xl">0</span>
+            </div>
+        </div>
+
+        <!-- Scanner Viewport -->
+        <div class="bg-[#1e1e1e] p-3 rounded-[2.5rem] shadow-2xl border border-white/5 relative group">
+            <div id="reader" onclick="focusCamera(event)" class="min-h-[280px] relative"></div>
+            <div id="focus-ring" class="focus-ring"></div>
+            
+            <!-- Flashlight Toggle -->
+            <button id="torch-btn" onclick="toggleTorch()" class="absolute top-6 right-6 z-20 w-12 h-12 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-white hidden items-center justify-center transition active:scale-90 shadow-xl">
+                <i id="torch-icon" class="fa-solid fa-bolt-slash text-xl"></i>
+            </button>
+
+            <div class="absolute bottom-6 left-0 right-0 flex justify-center z-10 px-6 gap-3">
+                <button id="start-btn" onclick="startScanner()" class="flex-1 bg-white text-black py-4 rounded-2xl font-black text-sm transition shadow-xl active:scale-95">
+                    <i class="fa-solid fa-camera mr-2"></i> INICIAR CÂMERA
+                </button>
+                <button id="stop-btn" onclick="stopScanner()" class="hidden flex-1 bg-red-500 text-white py-4 rounded-2xl font-black text-sm transition shadow-xl active:scale-95">
+                    <i class="fa-solid fa-stop mr-2"></i> PARAR
+                </button>
+            </div>
+        </div>
+
+        <!-- Feedback Notification -->
+        <div id="feedback" class="hidden glass-panel border border-pink-500/30 text-pink-400 px-6 py-4 rounded-2xl text-center font-bold shadow-xl animate-bounce">
+            <i class="fa-solid fa-circle-info mr-2"></i> <span id="feedback-text">Notificação</span>
+        </div>
+
+        <!-- Manual Entry -->
+        <div class="bg-gray-800/40 p-2 rounded-2xl flex border border-gray-700/50 shadow-inner">
+            <input type="text" id="manual-code" placeholder="Digitar código manualmente..." class="flex-1 bg-transparent border-none text-white px-4 py-2 text-sm focus:outline-none font-semibold">
+            <button onclick="addManual()" class="bg-gray-700 hover:bg-pink-500 text-white w-10 h-10 rounded-xl flex items-center justify-center transition shadow-md">
+                <i class="fa-solid fa-plus"></i>
+            </button>
+        </div>
+
+        <!-- Inventory List -->
+        <div id="inventory-list" class="space-y-3">
+            <div class="text-center text-gray-600 py-12" id="empty-state">
+                <i class="fa-solid fa-box-open text-4xl mb-4 opacity-10"></i>
+                <p class="font-bold text-xs uppercase tracking-widest">Nenhum item lido</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- Bottom Navigation -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-gray-900/90 backdrop-blur-xl border-t border-gray-800 z-40 pb-safe shadow-[0_-10px_30px_rgba(0,0,0,0.5)]">
+        <div class="flex justify-around items-center p-2 px-4 h-16">
+            <button onclick="toggleListsMenu()" class="flex flex-col items-center justify-center w-full text-gray-400 hover:text-pink-500 transition active:scale-95">
+                <i class="fa-solid fa-layer-group text-xl mb-1"></i>
+                <span class="text-[10px] font-bold uppercase tracking-wider">Coleções</span>
+            </button>
+            <div class="w-px h-8 bg-gray-800 mx-2"></div>
+            <button class="flex flex-col items-center justify-center w-full text-gray-600 cursor-not-allowed">
+                <i class="fa-solid fa-chart-simple text-xl mb-1"></i>
+                <span class="text-[10px] font-bold uppercase tracking-wider">Stats</span>
+            </button>
+        </div>
+    </nav>
+
+    <script>
+        let appState = { lists: {}, activeListId: null };
+        let html5QrScanner = null;
+        let isScanning = false;
+        let torchActive = false;
+        let isForceNewList = false;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadFromStorage();
+        });
+
+        function handleStartup(choice) {
+            document.getElementById('startup-overlay').classList.add('opacity-0');
+            setTimeout(() => {
+                document.getElementById('startup-overlay').classList.add('hidden');
+                
+                if (choice === 'new') {
+                    // Force the creation of a new list
+                    isForceNewList = true;
+                    const overlay = document.getElementById('lists-overlay');
+                    overlay.classList.remove('hidden');
+                    
+                    // Hide the close button and the existing list container
+                    document.getElementById('close-lists-btn').classList.add('hidden');
+                    document.getElementById('lists-container').classList.add('hidden');
+                    document.getElementById('lists-title').textContent = "Nova Coleção";
+                    
+                    document.getElementById('new-list-name').focus();
+                } else {
+                    renderList();
+                    updateListDisplay();
+                }
+            }, 300);
+        }
+
+        function validateEAN13(code) {
+            if (!/^\d{13}$/.test(code)) return false;
+            let sum = 0;
+            for (let i = 0; i < 12; i++) {
+                sum += parseInt(code[i]) * (i % 2 === 0 ? 1 : 3);
+            }
+            const check = (10 - (sum % 10)) % 10;
+            return check === parseInt(code[12]);
+        }
+
+        async function startScanner() {
+            try {
+                if (!html5QrScanner) html5QrScanner = new Html5Qrcode("reader");
+                
+                await html5QrScanner.start(
+                    { facingMode: "environment" },
+                    { fps: 30, qrbox: { width: 250, height: 250 } },
+                    onScanSuccess
+                );
+                
+                isScanning = true;
+                updateScannerUI(true);
+                
+                // Show the torch button explicitly when scanning starts
+                const torchBtn = document.getElementById('torch-btn');
+                torchBtn.classList.remove('hidden');
+                torchBtn.classList.add('flex');
+                
+            } catch (err) {
+                showErrorDialog("Erro na Câmera", "Não foi possível acessar a câmera. Verifique as permissões do navegador.");
+                console.error(err);
+            }
+        }
+
+        async function stopScanner() {
+            if (html5QrScanner && isScanning) {
+                await html5QrScanner.stop();
+                isScanning = false;
+                torchActive = false;
+                updateScannerUI(false);
+                
+                const torchBtn = document.getElementById('torch-btn');
+                torchBtn.classList.add('hidden');
+                torchBtn.classList.remove('flex');
+                updateTorchUI(false);
+            }
+        }
+
+        async function toggleTorch() {
+            if (!isScanning) return;
+            try {
+                torchActive = !torchActive;
+                await html5QrScanner.applyVideoConstraints({
+                    advanced: [{ torch: torchActive }]
+                });
+                updateTorchUI(torchActive);
+            } catch (e) {
+                console.error("Flashlight error", e);
+                torchActive = !torchActive; // Revert
+                showFeedback("A lanterna não é suportada neste navegador/dispositivo.");
+            }
+        }
+
+        function updateTorchUI(isActive) {
+            const btn = document.getElementById('torch-btn');
+            const icon = document.getElementById('torch-icon');
+            if (isActive) {
+                btn.classList.add('bg-yellow-500', 'text-black', 'border-yellow-400');
+                btn.classList.remove('bg-black/60', 'text-white', 'border-white/10');
+                icon.classList.remove('fa-bolt-slash');
+                icon.classList.add('fa-bolt');
+            } else {
+                btn.classList.remove('bg-yellow-500', 'text-black', 'border-yellow-400');
+                btn.classList.add('bg-black/60', 'text-white', 'border-white/10');
+                icon.classList.add('fa-bolt-slash');
+                icon.classList.remove('fa-bolt');
+            }
+        }
+
+        function focusCamera(e) {
+            if (!isScanning) return;
+            const ring = document.getElementById('focus-ring');
+            const rect = document.getElementById('reader').getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            ring.style.left = `${x}px`;
+            ring.style.top = `${y}px`;
+            ring.classList.add('active');
+            
+            setTimeout(() => ring.classList.remove('active'), 600);
+        }
+
+        function onScanSuccess(code) {
+            const reader = document.getElementById('reader');
+            reader.classList.add('scan-flash');
+            setTimeout(() => reader.classList.remove('scan-flash'), 400);
+
+            if (navigator.vibrate) navigator.vibrate(100);
+            handleItemAdd(code);
+        }
+
+        function handleItemAdd(code) {
+            const list = appState.lists[appState.activeListId];
+            if (list.items[code]) {
+                list.items[code]++;
+                showFeedback(`Adicionado: ${code} (x${list.items[code]})`);
+            } else {
+                list.items[code] = 1;
+                showFeedback(`Novo Item: ${code}`);
+            }
+            saveToStorage();
+            renderList();
+        }
+
+        function addManual() {
+            const input = document.getElementById('manual-code');
+            const code = input.value.trim();
+            if (code) {
+                handleItemAdd(code);
+                input.value = '';
+            }
+        }
+
+        function renderList() {
+            const container = document.getElementById('inventory-list');
+            const empty = document.getElementById('empty-state');
+            const items = appState.lists[appState.activeListId]?.items || {};
+            const codes = Object.keys(items).reverse();
+
+            // Clear previous items but keep empty state
+            Array.from(container.children).forEach(c => {
+                if(c.id !== 'empty-state') c.remove();
+            });
+            
+            empty.style.display = codes.length ? 'none' : 'block';
+            document.getElementById('total-count').textContent = codes.length;
+
+            codes.forEach(code => {
+                const el = document.createElement('div');
+                el.className = "bg-gray-800/40 p-4 rounded-3xl flex justify-between items-center border border-white/5 shadow-sm";
+                el.innerHTML = `
+                    <div class="overflow-hidden">
+                        <div class="font-mono font-bold text-white tracking-wider truncate w-40">${code}</div>
+                        <div class="text-[9px] text-gray-500 font-black uppercase tracking-widest">${validateEAN13(code) ? 'EAN-13' : 'Manual'}</div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center bg-black/30 rounded-2xl p-1 border border-gray-700/50">
+                            <button onclick="updateQty('${code}', -1)" class="w-8 h-8 rounded-xl bg-gray-700 hover:bg-gray-600 transition text-white font-bold">-</button>
+                            <span class="w-10 text-center font-bold text-pink-500">${items[code]}</span>
+                            <button onclick="updateQty('${code}', 1)" class="w-8 h-8 rounded-xl bg-gray-700 hover:bg-gray-600 transition text-white font-bold">+</button>
+                        </div>
+                    </div>
+                `;
+                container.insertBefore(el, empty);
+            });
+        }
+
+        function updateQty(code, delta) {
+            const items = appState.lists[appState.activeListId].items;
+            items[code] += delta;
+            if (items[code] <= 0) delete items[code];
+            saveToStorage();
+            renderList();
+        }
+
+        function updateScannerUI(active) {
+            document.getElementById('start-btn').classList.toggle('hidden', active);
+            document.getElementById('stop-btn').classList.toggle('hidden', !active);
+        }
+
+        function toggleListsMenu() {
+            if (isForceNewList) return; // Disallow closing if they haven't created a list yet.
+            
+            const overlay = document.getElementById('lists-overlay');
+            overlay.classList.toggle('hidden');
+            if (!overlay.classList.contains('hidden')) renderListsMenu();
+        }
+
+        function createNewList() {
+            const input = document.getElementById('new-list-name');
+            const name = input.value.trim();
+            
+            if (!name) {
+                input.parentElement.classList.add('border-red-500');
+                setTimeout(() => input.parentElement.classList.remove('border-red-500'), 1000);
+                return;
+            }
+
+            const id = Date.now().toString();
+            appState.lists[id] = { name, items: {}, createdAt: Date.now() };
+            appState.activeListId = id;
+            input.value = '';
+            saveToStorage();
+            
+            // Release the "forced" state
+            isForceNewList = false;
+            document.getElementById('close-lists-btn').classList.remove('hidden');
+            document.getElementById('lists-container').classList.remove('hidden');
+            document.getElementById('lists-title').textContent = "Coleções";
+            
+            const overlay = document.getElementById('lists-overlay');
+            overlay.classList.add('hidden');
+            
+            renderList();
+            updateListDisplay();
+        }
+
+        function switchList(id) {
+            appState.activeListId = id;
+            saveToStorage();
+            renderList();
+            updateListDisplay();
+            toggleListsMenu(); // Hides menu normally
+        }
+
+        function renderListsMenu() {
+            const container = document.getElementById('lists-container');
+            container.innerHTML = '';
+            Object.keys(appState.lists).sort((a,b) => appState.lists[b].createdAt - appState.lists[a].createdAt).forEach(id => {
+                const list = appState.lists[id];
+                const active = id === appState.activeListId;
+                const el = document.createElement('div');
+                el.className = `p-4 rounded-3xl cursor-pointer flex justify-between items-center border-2 transition ${active ? 'bg-pink-500/10 border-pink-500' : 'bg-gray-900 border-transparent hover:bg-gray-800'}`;
+                el.onclick = () => switchList(id);
+                el.innerHTML = `
+                    <div class="font-bold ${active ? 'text-white' : 'text-gray-400'}">${list.name}</div>
+                    <div class="text-xs font-black text-pink-500">${Object.keys(list.items).length} SKU</div>
+                `;
+                container.appendChild(el);
+            });
+        }
+
+        function updateListDisplay() {
+            document.getElementById('current-list-display').textContent = appState.lists[appState.activeListId]?.name || "Nenhuma lista";
+        }
+
+        function showFeedback(msg) {
+            const f = document.getElementById('feedback');
+            document.getElementById('feedback-text').textContent = msg;
+            f.classList.remove('hidden');
+            setTimeout(() => f.classList.add('hidden'), 3000);
+        }
+
+        function exportData() {
+            const items = appState.lists[appState.activeListId]?.items;
+            if (!items || !Object.keys(items).length) return showErrorDialog("Lista Vazia", "Não há itens para exportar.");
+            const csv = "Código,Quantidade\n" + Object.entries(items).map(e => e.join(',')).join('\n');
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Export_${appState.lists[appState.activeListId].name}_${new Date().toLocaleDateString()}.csv`;
+            a.click();
+        }
+
+        function showErrorDialog(title, msg) {
+            document.getElementById('error-dialog-title').textContent = title;
+            document.getElementById('error-dialog-message').textContent = msg;
+            document.getElementById('error-dialog-overlay').classList.remove('hidden');
+        }
+
+        function saveToStorage() { localStorage.setItem('scanner_pro_v2', JSON.stringify(appState)); }
+        function loadFromStorage() {
+            const data = localStorage.getItem('scanner_pro_v2');
+            if (data) {
+                appState = JSON.parse(data);
+            } else {
+                const id = Date.now().toString();
+                appState = { lists: { [id]: { name: "Lista Principal", items: {}, createdAt: Date.now() } }, activeListId: id };
+            }
+        }
+    </script>
+</body>
+</html>
