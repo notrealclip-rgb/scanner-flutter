@@ -22,7 +22,7 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
   bool _isForcedNewList = false;
 
   @override
-  void dispose() {
+  void dispose() { 
     _manualController.dispose();
     super.dispose();
   }
