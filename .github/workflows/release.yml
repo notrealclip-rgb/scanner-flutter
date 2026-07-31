@@ -43,43 +43,9 @@ jobs:
           name: app-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
 
-  build-windows:
-    name: Build Windows
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-
-      - name: Get dependencies
-        run: flutter pub get
-
-      - name: Build Windows
-        run: flutter build windows --release
-
-      - name: Install Inno Setup
-        run: choco install innosetup
-
-      - name: Create Installer
-        run: |
-          # Extract version from tag (remove 'v' prefix)
-          $TAG = "${{ github.ref_name }}"
-          $VERSION = $TAG.Substring(1)
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion="$VERSION" windows/setup.iss
-        shell: powershell
-
-      - name: Upload Installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-installer
-          path: build/windows/bms_setup.exe
-
   create-release:
     name: Create Release
-    needs: [build-android, build-windows]
+    needs: [build-android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -91,11 +57,6 @@ jobs:
         with:
           name: app-release-apk
 
-      - name: Download Windows Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-installer
-
       - name: Rename APK
         run: mv app-release.apk bms-android.apk
 
@@ -106,7 +67,6 @@ jobs:
           name: Release ${{ github.ref_name }}
           files: |
             bms-android.apk
-            bms_setup.exe
           generate_release_notes: true
           draft: false
           prerelease: false
