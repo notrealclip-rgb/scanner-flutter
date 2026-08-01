@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/collection_model.dart';
 import '../services/storage_service.dart';
 
@@ -17,12 +18,20 @@ class ScannerProvider extends ChangeNotifier {
   String? _feedbackText;
   Timer? _feedbackTimer;
 
+  // Non-EAN-13 barcode currently being seen by the camera. This lives here
+  // (rather than as local State in ScannerViewport) so the persistent status
+  // zone below the camera preview can read and act on it too.
+  String? _nonEanCode;
+  String? _nonEanFormat;
+
   // Getters
   bool get isLoading => _isLoading;
   bool get showStartupModal => _showStartupModal;
   bool get isScanning => _isScanning;
   bool get torchActive => _torchActive;
   String? get feedbackText => _feedbackText;
+  String? get nonEanCode => _nonEanCode;
+  String? get nonEanFormat => _nonEanFormat;
   int get scanConfirmationMs => _scanConfirmationMs;
 
   AppStateData get appState => _appState;
@@ -114,16 +123,39 @@ class ScannerProvider extends ChangeNotifier {
     }
 
     _lastScanTime = now;
-    addItemToActiveList(code);
+    addItemToActiveList(code, viaScan: true);
     return true;
   }
 
-  void addItemToActiveList(String code) {
+  /// Called by the camera overlay while a recognized-but-not-EAN-13 barcode
+  /// is in view. Kept in the provider (not local widget state) so the
+  /// persistent status zone below the preview can show it too.
+  void setNonEanDetection(String code, String format) {
+    if (_nonEanCode == code && _nonEanFormat == format) return;
+    _nonEanCode = code;
+    _nonEanFormat = format;
+    notifyListeners();
+  }
+
+  void clearNonEanDetection() {
+    if (_nonEanCode == null && _nonEanFormat == null) return;
+    _nonEanCode = null;
+    _nonEanFormat = null;
+    notifyListeners();
+  }
+
+  void addItemToActiveList(String code, {bool viaScan = false}) {
     final active = activeCollection;
     if (active == null) return;
 
     final trimmed = code.trim();
     if (trimmed.isEmpty) return;
+
+    // Vibrate for items added by the camera/scanner, but not for manual
+    // text-entry additions.
+    if (viaScan) {
+      HapticFeedback.mediumImpact();
+    }
 
     if (active.items.containsKey(trimmed)) {
       active.items[trimmed] = (active.items[trimmed] ?? 0) + 1;

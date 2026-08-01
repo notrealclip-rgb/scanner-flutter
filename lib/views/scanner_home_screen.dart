@@ -6,6 +6,7 @@ import '../services/export_service.dart';
 import '../utils/ean_validator.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/scanner_viewport.dart';
+import '../widgets/scanner_status_zone.dart';
 import '../widgets/startup_dialog.dart';
 import '../widgets/collections_modal.dart';
 
@@ -22,7 +23,7 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
   bool _isForcedNewList = false;
 
   @override
-  void dispose() { 
+  void dispose() {
     _manualController.dispose();
     super.dispose();
   }
@@ -467,7 +468,13 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
 
                         // Scanner Viewport Widget
                         const ScannerViewport(),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 12),
+
+                        // Persistent status zone: always shows the active
+                        // list, or a prompt for a non-EAN-13 code in view.
+                        // Unlike the toast below, this never auto-dismisses.
+                        const ScannerStatusZone(),
+                        const SizedBox(height: 12),
 
                         // Feedback Notification Banner
                         if (feedbackMsg != null)

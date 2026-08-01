@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
@@ -28,8 +27,6 @@ class _ScannerViewportState extends State<ScannerViewport> {
   Rect? _targetRect;
   Rect? _currentRect;
   bool _showTrackingOverlay = false;
-  String? _nonEanCode;
-  String? _nonEanFormat;
   double _holdProgress = 0.0; // 0.0 to 1.0 over 2 seconds
   DateTime? _displayStartTime;
   DateTime? _lastDetectTime;
@@ -123,8 +120,7 @@ class _ScannerViewportState extends State<ScannerViewport> {
 
   void _on2SecondDisplayCompleted(String code) {
     final provider = context.read<ScannerProvider>();
-    provider.addItemToActiveList(code);
-    HapticFeedback.mediumImpact();
+    provider.addItemToActiveList(code, viaScan: true);
     _lastAddCompletedTime = DateTime.now();
 
     // Pause the countdown instead of restarting it here. Restarting it
@@ -158,21 +154,16 @@ class _ScannerViewportState extends State<ScannerViewport> {
 
     if (validEanBarcode == null) {
       final code = nonEanBarcode?.rawValue?.trim();
-      if (code != null && code != _nonEanCode) {
-        setState(() {
-          _nonEanCode = code;
-          _nonEanFormat = _barcodeFormatLabel(nonEanBarcode!.format);
-        });
+      if (code != null) {
+        context.read<ScannerProvider>().setNonEanDetection(
+          code,
+          _barcodeFormatLabel(nonEanBarcode!.format),
+        );
       }
       return;
     }
 
-    if (_nonEanCode != null) {
-      setState(() {
-        _nonEanCode = null;
-        _nonEanFormat = null;
-      });
-    }
+    context.read<ScannerProvider>().clearNonEanDetection();
 
     final code = validEanBarcode.rawValue!;
     final imageSize = capture.size;
@@ -412,70 +403,6 @@ class _ScannerViewportState extends State<ScannerViewport> {
                             ),
                           ),
 
-                        if (_nonEanCode != null)
-                          Positioned(
-                            left: 16,
-                            right: 16,
-                            bottom: 16,
-                            child: Material(
-                              color: Colors.transparent,
-                              child: Container(
-                                padding: const EdgeInsets.fromLTRB(
-                                  14,
-                                  10,
-                                  8,
-                                  10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFF1F2937,
-                                  ).withValues(alpha: 0.94),
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(
-                                    color: Colors.amber.withValues(alpha: 0.7),
-                                  ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        'Detectado: ${_nonEanFormat ?? 'Outro formato'}',
-                                        style: TextStyle(
-                                          color: Colors.amber,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                    Text(
-                                      _nonEanCode!,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontFamily: 'monospace',
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    IconButton(
-                                      tooltip: 'Adicionar à lista',
-                                      onPressed: () {
-                                        context
-                                            .read<ScannerProvider>()
-                                            .addItemToActiveList(_nonEanCode!);
-                                        HapticFeedback.mediumImpact();
-                                        setState(() {
-                                          _nonEanCode = null;
-                                          _nonEanFormat = null;
-                                        });
-                                      },
-                                      icon: const Icon(Icons.add_circle),
-                                      color: Colors.amber,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
                       ],
                     ),
                   ),
@@ -549,6 +476,7 @@ class _ScannerViewportState extends State<ScannerViewport> {
                       _lastDetectTime = null;
                       _showTrackingOverlay = false;
                     });
+                    provider.clearNonEanDetection();
                   } else {
                     // autoStart is false, so we are always the one who
                     // (re)starts the camera. start() on the same controller
