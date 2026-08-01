@@ -247,7 +247,6 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
     final activeCollection = provider.activeCollection;
     final itemsMap = activeCollection?.items ?? {};
     final itemCodes = itemsMap.keys.toList().reversed.toList();
-    final feedbackMsg = provider.feedbackText;
 
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
@@ -470,49 +469,13 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
                         const ScannerViewport(),
                         const SizedBox(height: 12),
 
-                        // Persistent status zone: always shows the active
-                        // list, or a prompt for a non-EAN-13 code in view.
-                        // Unlike the toast below, this never auto-dismisses.
+                        // Single dynamic status widget: shows the active
+                        // list by default, a transient feedback message
+                        // right after something happens, or a non-EAN-13
+                        // prompt when the camera sees one — never more
+                        // than one of these on screen at a time.
                         const ScannerStatusZone(),
                         const SizedBox(height: 12),
-
-                        // Feedback Notification Banner
-                        if (feedbackMsg != null)
-                          GlassCard(
-                            margin: const EdgeInsets.only(bottom: 16),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 20,
-                              vertical: 14,
-                            ),
-                            backgroundColor: const Color(
-                              0xFFEC4899,
-                            ).withValues(alpha: 0.15),
-                            border: Border.all(
-                              color: const Color(
-                                0xFFEC4899,
-                              ).withValues(alpha: 0.4),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const FaIcon(
-                                  FontAwesomeIcons.circleInfo,
-                                  color: Color(0xFFEC4899),
-                                  size: 16,
-                                ),
-                                const SizedBox(width: 10),
-                                Flexible(
-                                  child: Text(
-                                    feedbackMsg,
-                                    style: const TextStyle(
-                                      color: Color(0xFFF472B6),
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
 
                         // Manual Entry Field
                         Container(

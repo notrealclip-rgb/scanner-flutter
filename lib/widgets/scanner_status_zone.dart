@@ -4,14 +4,18 @@ import 'package:provider/provider.dart';
 import '../providers/scanner_provider.dart';
 import 'glass_card.dart';
 
-/// A persistent status strip shown right below the camera preview.
+/// A single dynamic status strip shown right below the camera preview.
 ///
-/// Unlike the transient feedback toast (which auto-hides after a few
-/// seconds), this zone always shows something relevant to the current
-/// scanning state and never disappears on its own:
-///  - by default, the active list name ("Lista ativa: ...")
-///  - when the camera is seeing a non-EAN-13 barcode, a prompt asking
+/// This replaces what used to be two separate widgets (the persistent
+/// status zone + a separate transient feedback toast). It now owns all of
+/// the states that can appear in that slot and animates between them, so
+/// there's only ever one widget occupying that space:
+///  - highest priority: a non-EAN-13 barcode is in view -> prompt asking
 ///    whether to add it anyway, with a button to do so.
+///  - next: a transient feedback message (e.g. "Novo Item: ...") shown for
+///    a few seconds right after something happens, then fades back out.
+///  - default/fallback: the active list name ("Lista ativa: ..."), which
+///    never disappears on its own.
 class ScannerStatusZone extends StatelessWidget {
   const ScannerStatusZone({super.key});
 
@@ -19,12 +23,47 @@ class ScannerStatusZone extends StatelessWidget {
   Widget build(BuildContext context) {
     final provider = context.watch<ScannerProvider>();
     final nonEanCode = provider.nonEanCode;
+    final feedbackMsg = provider.feedbackText;
+
+    late final Widget content;
+    late final String stateKey;
 
     if (nonEanCode != null) {
-      return _NonEanPrompt(code: nonEanCode, format: provider.nonEanFormat);
+      stateKey = 'non_ean';
+      content = _NonEanPrompt(code: nonEanCode, format: provider.nonEanFormat);
+    } else if (feedbackMsg != null) {
+      stateKey = 'feedback:$feedbackMsg';
+      content = _FeedbackBanner(message: feedbackMsg);
+    } else {
+      final activeName = provider.activeCollection?.name;
+      stateKey = 'default';
+      content = _DefaultStatus(activeName: activeName);
     }
 
-    final activeName = provider.activeCollection?.name;
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: SizeTransition(
+          sizeFactor: animation,
+          axisAlignment: -1,
+          child: child,
+        ),
+      ),
+      child: KeyedSubtree(key: ValueKey(stateKey), child: content),
+    );
+  }
+}
+
+class _DefaultStatus extends StatelessWidget {
+  final String? activeName;
+
+  const _DefaultStatus({required this.activeName});
+
+  @override
+  Widget build(BuildContext context) {
     return GlassCard(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
@@ -43,6 +82,42 @@ class ScannerStatusZone extends StatelessWidget {
               style: const TextStyle(
                 color: Colors.white70,
                 fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FeedbackBanner extends StatelessWidget {
+  final String message;
+
+  const _FeedbackBanner({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassCard(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      backgroundColor: const Color(0xFFEC4899).withValues(alpha: 0.15),
+      border: Border.all(color: const Color(0xFFEC4899).withValues(alpha: 0.4)),
+      child: Row(
+        children: [
+          const FaIcon(
+            FontAwesomeIcons.circleInfo,
+            color: Color(0xFFEC4899),
+            size: 14,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: Color(0xFFF472B6),
+                fontWeight: FontWeight.bold,
                 fontSize: 13,
               ),
               overflow: TextOverflow.ellipsis,
