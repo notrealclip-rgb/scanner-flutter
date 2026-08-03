@@ -39,10 +39,4 @@ class ExportService {
       return true;
     }
   }
-}      debugPrint("Export error: $e");
-      // Fallback share text
-      await Share.share(csvData, subject: filename);
-      return true;
-    }
-  }
 }
