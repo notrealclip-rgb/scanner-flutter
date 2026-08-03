@@ -18,9 +18,7 @@ class ScannerProvider extends ChangeNotifier {
   String? _feedbackText;
   Timer? _feedbackTimer;
 
-  // Non-EAN-13 barcode currently being seen by the camera. This lives here
-  // (rather than as local State in ScannerViewport) so the persistent status
-  // zone below the camera preview can read and act on it too.
+  // Non-EAN-13 / JAN barcode currently being seen by the camera.
   String? _nonEanCode;
   String? _nonEanFormat;
 
@@ -59,10 +57,10 @@ class ScannerProvider extends ChangeNotifier {
     if (loadedState != null && loadedState.lists.isNotEmpty) {
       _appState = loadedState;
       if (_appState.activeListId == null ||
-          !_appState.lists.containsKey(_appState.activeListId)) {
+        !_appState.lists.containsKey(_appState.activeListId)) {
         _appState.activeListId = sortedCollections.first.id;
-      }
-      _showStartupModal = true;
+        }
+        _showStartupModal = true;
     } else {
       // Create initial default list if none exists
       final defaultId = DateTime.now().millisecondsSinceEpoch.toString();
@@ -117,19 +115,17 @@ class ScannerProvider extends ChangeNotifier {
   bool onBarcodeScanned(String code) {
     final now = DateTime.now();
     if (_lastScanTime != null &&
-        now.difference(_lastScanTime!).inMilliseconds < _scanConfirmationMs) {
+      now.difference(_lastScanTime!).inMilliseconds < _scanConfirmationMs) {
       // Cooldown active, ignore scan
       return false;
-    }
+      }
 
-    _lastScanTime = now;
+      _lastScanTime = now;
     addItemToActiveList(code, viaScan: true);
     return true;
   }
 
-  /// Called by the camera overlay while a recognized-but-not-EAN-13 barcode
-  /// is in view. Kept in the provider (not local widget state) so the
-  /// persistent status zone below the preview can show it too.
+  /// Called by the camera overlay while a non-auto barcode (non-EAN or JAN) is in view.
   void setNonEanDetection(String code, String format) {
     if (_nonEanCode == code && _nonEanFormat == format) return;
     _nonEanCode = code;
@@ -151,10 +147,10 @@ class ScannerProvider extends ChangeNotifier {
     final trimmed = code.trim();
     if (trimmed.isEmpty) return;
 
-    // Vibrate for items added by the camera/scanner, but not for manual
-    // text-entry additions.
+    // Trigger haptic vibration for camera additions
     if (viaScan) {
-      HapticFeedback.mediumImpact();
+      HapticFeedback.vibrate();
+      HapticFeedback.heavyImpact();
     }
 
     if (active.items.containsKey(trimmed)) {

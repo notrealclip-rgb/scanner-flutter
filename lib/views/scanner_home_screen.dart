@@ -21,6 +21,7 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
   final TextEditingController _manualController = TextEditingController();
   bool _showCollectionsModal = false;
   bool _isForcedNewList = false;
+  bool _isFabMenuOpen = false;
 
   @override
   void dispose() {
@@ -114,7 +115,7 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
             labelStyle: TextStyle(color: Colors.white70),
           ),
           onSubmitted: (value) =>
-              Navigator.pop(ctx, int.tryParse(value.trim())),
+          Navigator.pop(ctx, int.tryParse(value.trim())),
         ),
         actions: [
           TextButton(
@@ -123,7 +124,7 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
           ),
           TextButton(
             onPressed: () =>
-                Navigator.pop(ctx, int.tryParse(controller.text.trim())),
+            Navigator.pop(ctx, int.tryParse(controller.text.trim())),
             child: const Text('Salvar'),
           ),
         ],
@@ -147,21 +148,21 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
           style: TextStyle(color: Colors.white),
         ),
         children: [500, 1000, 2000]
-            .map(
-              (milliseconds) => SimpleDialogOption(
-                onPressed: () => Navigator.pop(ctx, milliseconds),
-                child: Text(
-                  '${milliseconds ~/ 1000 == 0 ? '0,5' : milliseconds ~/ 1000} segundo${milliseconds == 1000 ? '' : 's'}',
-                  style: TextStyle(
-                    color: milliseconds == provider.scanConfirmationMs
-                        ? const Color(0xFFEC4899)
-                        : Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+        .map(
+          (milliseconds) => SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, milliseconds),
+            child: Text(
+              '${milliseconds ~/ 1000 == 0 ? '0,5' : milliseconds ~/ 1000} segundo${milliseconds == 1000 ? '' : 's'}',
+              style: TextStyle(
+                color: milliseconds == provider.scanConfirmationMs
+                ? const Color(0xFFEC4899)
+                : Colors.white,
+                fontWeight: FontWeight.bold,
               ),
-            )
-            .toList(),
+            ),
+          ),
+        )
+        .toList(),
       ),
     );
 
@@ -252,7 +253,7 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
       backgroundColor: const Color(0xFF121212),
       body: Stack(
         children: [
-          // Main App Content
+          // Main Content
           SafeArea(
             child: Column(
               children: [
@@ -305,30 +306,6 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
                         ),
                         Row(
                           children: [
-                            InkWell(
-                              onTap: _chooseScanDelay,
-                              borderRadius: BorderRadius.circular(20),
-                              child: Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFF9333EA,
-                                  ).withValues(alpha: 0.12),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: const Color(
-                                      0xFF9333EA,
-                                    ).withValues(alpha: 0.35),
-                                  ),
-                                ),
-                                child: const FaIcon(
-                                  FontAwesomeIcons.clock,
-                                  color: Color(0xFF9333EA),
-                                  size: 12,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
                             InkWell(
                               onTap: _confirmClearList,
                               borderRadius: BorderRadius.circular(20),
@@ -402,11 +379,11 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
                 // Scrollable Content Body
                 Expanded(
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(16.0),
+                    padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 100.0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Active List & Total SKU count display
+                        // Active List & Total SKU count
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -465,15 +442,11 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
                         ),
                         const SizedBox(height: 20),
 
-                        // Scanner Viewport Widget
+                        // Scanner Viewport
                         const ScannerViewport(),
                         const SizedBox(height: 12),
 
-                        // Single dynamic status widget: shows the active
-                        // list by default, a transient feedback message
-                        // right after something happens, or a non-EAN-13
-                        // prompt when the camera sees one — never more
-                        // than one of these on screen at a time.
+                        // Dynamic Status Zone
                         const ScannerStatusZone(),
                         const SizedBox(height: 12),
 
@@ -567,179 +540,179 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
                               ),
                             ),
                           )
-                        else
-                          ListView.separated(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            itemCount: itemCodes.length,
-                            separatorBuilder: (_, index) =>
-                                const SizedBox(height: 12),
-                            itemBuilder: (context, index) {
-                              final code = itemCodes[index];
-                              final qty = itemsMap[code] ?? 0;
-                              final isEan13 = EanValidator.validateEAN13(code);
+                          else
+                            ListView.separated(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: itemCodes.length,
+                              separatorBuilder: (_, index) =>
+                              const SizedBox(height: 12),
+                              itemBuilder: (context, index) {
+                                final code = itemCodes[index];
+                                final qty = itemsMap[code] ?? 0;
+                                final isEan13 = EanValidator.validateEAN13(code);
 
-                              return Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFF1F2937,
-                                  ).withValues(alpha: 0.4),
-                                  borderRadius: BorderRadius.circular(24),
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.05),
+                                return Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: const Color(
+                                      0xFF1F2937,
+                                    ).withValues(alpha: 0.4),
+                                    borderRadius: BorderRadius.circular(24),
+                                    border: Border.all(
+                                      color: Colors.white.withValues(alpha: 0.05),
+                                    ),
                                   ),
-                                ),
-                                child: Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            code,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontFamily: 'monospace',
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 16,
-                                              color: Colors.white,
-                                              letterSpacing: 1.0,
+                                  child: Row(
+                                    mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              code,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontFamily: 'monospace',
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 16,
+                                                color: Colors.white,
+                                                letterSpacing: 1.0,
+                                              ),
                                             ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            isEan13 ? 'EAN-13' : 'MANUAL',
-                                            style: const TextStyle(
-                                              fontSize: 9,
-                                              color: Color(0xFF6B7280),
-                                              fontWeight: FontWeight.w900,
-                                              letterSpacing: 1.5,
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              isEan13 ? 'EAN-13' : 'MANUAL',
+                                              style: const TextStyle(
+                                                fontSize: 9,
+                                                color: Color(0xFF6B7280),
+                                                fontWeight: FontWeight.w900,
+                                                letterSpacing: 1.5,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Row(
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.all(4),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black.withValues(
+                                                alpha: 0.3,
+                                              ),
+                                              borderRadius: BorderRadius.circular(
+                                                16,
+                                              ),
+                                              border: Border.all(
+                                                color: const Color(
+                                                  0xFF374151,
+                                                ).withValues(alpha: 0.5),
+                                              ),
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                InkWell(
+                                                  onTap: () =>
+                                                  provider.updateItemQuantity(
+                                                    code,
+                                                    -1,
+                                                  ),
+                                                  borderRadius:
+                                                  BorderRadius.circular(12),
+                                                  child: Container(
+                                                    width: 32,
+                                                    height: 32,
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(
+                                                        0xFF374151,
+                                                      ),
+                                                      borderRadius:
+                                                      BorderRadius.circular(
+                                                        12,
+                                                      ),
+                                                    ),
+                                                    child: const Center(
+                                                      child: Text(
+                                                        '-',
+                                                        style: TextStyle(
+                                                          color: Colors.white,
+                                                          fontWeight:
+                                                          FontWeight.bold,
+                                                          fontSize: 16,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                                InkWell(
+                                                  onTap: () => _editItemQuantity(
+                                                    code,
+                                                    qty,
+                                                  ),
+                                                  borderRadius:
+                                                  BorderRadius.circular(8),
+                                                  child: SizedBox(
+                                                    width: 40,
+                                                    child: Text(
+                                                      '$qty',
+                                                      textAlign: TextAlign.center,
+                                                      style: const TextStyle(
+                                                        color: Color(0xFFEC4899),
+                                                        fontWeight:
+                                                        FontWeight.bold,
+                                                        fontSize: 16,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                                InkWell(
+                                                  onTap: () =>
+                                                  provider.updateItemQuantity(
+                                                    code,
+                                                    1,
+                                                  ),
+                                                  borderRadius:
+                                                  BorderRadius.circular(12),
+                                                  child: Container(
+                                                    width: 32,
+                                                    height: 32,
+                                                    decoration: BoxDecoration(
+                                                      color: const Color(
+                                                        0xFF374151,
+                                                      ),
+                                                      borderRadius:
+                                                      BorderRadius.circular(
+                                                        12,
+                                                      ),
+                                                    ),
+                                                    child: const Center(
+                                                      child: Text(
+                                                        '+',
+                                                        style: TextStyle(
+                                                          color: Colors.white,
+                                                          fontWeight:
+                                                          FontWeight.bold,
+                                                          fontSize: 16,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
                                         ],
                                       ),
-                                    ),
-                                    Row(
-                                      children: [
-                                        Container(
-                                          padding: const EdgeInsets.all(4),
-                                          decoration: BoxDecoration(
-                                            color: Colors.black.withValues(
-                                              alpha: 0.3,
-                                            ),
-                                            borderRadius: BorderRadius.circular(
-                                              16,
-                                            ),
-                                            border: Border.all(
-                                              color: const Color(
-                                                0xFF374151,
-                                              ).withValues(alpha: 0.5),
-                                            ),
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              InkWell(
-                                                onTap: () =>
-                                                    provider.updateItemQuantity(
-                                                      code,
-                                                      -1,
-                                                    ),
-                                                borderRadius:
-                                                    BorderRadius.circular(12),
-                                                child: Container(
-                                                  width: 32,
-                                                  height: 32,
-                                                  decoration: BoxDecoration(
-                                                    color: const Color(
-                                                      0xFF374151,
-                                                    ),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          12,
-                                                        ),
-                                                  ),
-                                                  child: const Center(
-                                                    child: Text(
-                                                      '-',
-                                                      style: TextStyle(
-                                                        color: Colors.white,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                        fontSize: 16,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                              InkWell(
-                                                onTap: () => _editItemQuantity(
-                                                  code,
-                                                  qty,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                                child: SizedBox(
-                                                  width: 40,
-                                                  child: Text(
-                                                    '$qty',
-                                                    textAlign: TextAlign.center,
-                                                    style: const TextStyle(
-                                                      color: Color(0xFFEC4899),
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      fontSize: 16,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                              InkWell(
-                                                onTap: () =>
-                                                    provider.updateItemQuantity(
-                                                      code,
-                                                      1,
-                                                    ),
-                                                borderRadius:
-                                                    BorderRadius.circular(12),
-                                                child: Container(
-                                                  width: 32,
-                                                  height: 32,
-                                                  decoration: BoxDecoration(
-                                                    color: const Color(
-                                                      0xFF374151,
-                                                    ),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          12,
-                                                        ),
-                                                  ),
-                                                  child: const Center(
-                                                    child: Text(
-                                                      '+',
-                                                      style: TextStyle(
-                                                        color: Colors.white,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                        fontSize: 16,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
                       ],
                     ),
                   ),
@@ -748,82 +721,119 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
             ),
           ),
 
-          // Bottom Navigation Bar
+          // Bottom Right Expandable Floating Menu
           Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              height: 64,
-              decoration: BoxDecoration(
-                color: const Color(0xFF111827).withValues(alpha: 0.9),
-                border: const Border(top: BorderSide(color: Color(0xFF1F2937))),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap: () {
-                        setState(() {
-                          _isForcedNewList = false;
-                          _showCollectionsModal = true;
-                        });
-                      },
-                      child: const Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          FaIcon(
-                            FontAwesomeIcons.layerGroup,
-                            color: Color(0xFFEC4899),
-                            size: 18,
+            bottom: 24,
+            right: 20,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (_isFabMenuOpen) ...[
+                  // Floating sub-button: Delay settings
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1F2937),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: const Text(
+                          'Tempo de Leitura',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
                           ),
-                          SizedBox(height: 4),
-                          Text(
-                            'COLEÇÕES',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              letterSpacing: 1.0,
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
-                  Container(
-                    width: 1,
-                    height: 32,
-                    color: const Color(0xFF1F2937),
-                  ),
-                  Expanded(
-                    child: Opacity(
-                      opacity: 0.4,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          FaIcon(
-                            FontAwesomeIcons.chartSimple,
-                            color: Colors.grey,
-                            size: 18,
-                          ),
-                          SizedBox(height: 4),
-                          Text(
-                            'STATS',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey,
-                              letterSpacing: 1.0,
-                            ),
-                          ),
-                        ],
+                      const SizedBox(width: 8),
+                      FloatingActionButton.small(
+                        heroTag: 'fab_delay',
+                        backgroundColor: const Color(0xFF9333EA),
+                        onPressed: () {
+                          setState(() => _isFabMenuOpen = false);
+                          _chooseScanDelay();
+                        },
+                        child: const FaIcon(
+                          FontAwesomeIcons.clock,
+                          color: Colors.white,
+                          size: 14,
+                        ),
                       ),
-                    ),
+                    ],
                   ),
+                  const SizedBox(height: 12),
+
+                  // Floating sub-button: Collections
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1F2937),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: const Text(
+                          'Coleções',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FloatingActionButton.small(
+                        heroTag: 'fab_collections',
+                        backgroundColor: const Color(0xFFEC4899),
+                        onPressed: () {
+                          setState(() {
+                            _isFabMenuOpen = false;
+                            _isForcedNewList = false;
+                            _showCollectionsModal = true;
+                          });
+                        },
+                        child: const FaIcon(
+                          FontAwesomeIcons.layerGroup,
+                          color: Colors.white,
+                          size: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
                 ],
-              ),
+
+                // Main Floating Action Button
+                FloatingActionButton(
+                  heroTag: 'fab_main',
+                  backgroundColor: const Color(0xFFEC4899),
+                  onPressed: () {
+                    setState(() {
+                      _isFabMenuOpen = !_isFabMenuOpen;
+                    });
+                  },
+                  child: FaIcon(
+                    _isFabMenuOpen
+                    ? FontAwesomeIcons.xmark
+                    : FontAwesomeIcons.layerGroup,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+              ],
             ),
           ),
 
@@ -841,18 +851,18 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
               ),
             ),
 
-          // Startup Dialog Overlay
-          if (provider.showStartupModal)
-            Positioned.fill(
-              child: StartupDialog(
-                onStartNewColection: () {
-                  setState(() {
-                    _isForcedNewList = true;
-                    _showCollectionsModal = true;
-                  });
-                },
+            // Startup Dialog Overlay
+            if (provider.showStartupModal)
+              Positioned.fill(
+                child: StartupDialog(
+                  onStartNewColection: () {
+                    setState(() {
+                      _isForcedNewList = true;
+                      _showCollectionsModal = true;
+                    });
+                  },
+                ),
               ),
-            ),
         ],
       ),
     );

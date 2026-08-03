@@ -21,13 +21,14 @@ class _ScannerViewportState extends State<ScannerViewport> {
   Offset? _focusPos;
   bool _showFocusRing = false;
 
-  // Keep the visual tracker responsive between camera callbacks.
+  // Visual tracker state
   Timer? _overlayTimer;
   String? _trackedCode;
   Rect? _targetRect;
   Rect? _currentRect;
   bool _showTrackingOverlay = false;
-  double _holdProgress = 0.0; // 0.0 to 1.0 over 2 seconds
+  bool _isYellowOverlay = false;
+  double _holdProgress = 0.0;
   DateTime? _displayStartTime;
   DateTime? _lastDetectTime;
   DateTime? _lastAddCompletedTime;
@@ -45,17 +46,9 @@ class _ScannerViewportState extends State<ScannerViewport> {
 
   void _initScanner() {
     _scannerController = MobileScannerController(
-      // `noDuplicates` reports a code only once, which freezes its tracker.
-      // Unrestricted callbacks keep the target rectangle moving; item
-      // insertion is still protected by the confirmation period below.
       detectionSpeed: DetectionSpeed.unrestricted,
       torchEnabled: false,
       returnImage: false,
-      // We call start()/stop() ourselves from the button handler below.
-      // Leaving this at the default (true) makes the MobileScanner widget
-      // *also* call start() internally as soon as it remounts, racing our
-      // manual start() call. That double-start is what left the preview
-      // black/frozen the second time the camera was started.
       autoStart: false,
     );
   }
@@ -73,11 +66,8 @@ class _ScannerViewportState extends State<ScannerViewport> {
     final now = DateTime.now();
     final confirmationMs = context.read<ScannerProvider>().scanConfirmationMs;
 
-    // Short grace window: keep the square displayed across a couple of
-    // skipped camera frames, but clear quickly once the barcode is
-    // actually gone so we don't keep "tracking" a ghost box.
     if (_lastDetectTime != null &&
-        now.difference(_lastDetectTime!).inMilliseconds > 400) {
+      now.difference(_lastDetectTime!).inMilliseconds > 400) {
       setState(() {
         _trackedCode = null;
         _targetRect = null;
@@ -86,36 +76,34 @@ class _ScannerViewportState extends State<ScannerViewport> {
         _displayStartTime = null;
         _lastDetectTime = null;
         _showTrackingOverlay = false;
+        _isYellowOverlay = false;
       });
       return;
-    }
+      }
 
-    // Smooth the overlay without forcing the camera preview to rebuild at 60fps.
-    if (_targetRect != null && _trackedCode != null) {
-      setState(() {
-        if (_currentRect == null) {
-          _currentRect = _targetRect;
-        } else {
-          _currentRect = Rect.lerp(_currentRect, _targetRect, 0.35);
-        }
+      if (_targetRect != null && _trackedCode != null) {
+        setState(() {
+          if (_currentRect == null) {
+            _currentRect = _targetRect;
+          } else {
+            _currentRect = Rect.lerp(_currentRect, _targetRect, 0.35);
+          }
 
-        // Calculate elapsed display time
-        if (_displayStartTime != null) {
-          final elapsedMs = now.difference(_displayStartTime!).inMilliseconds;
-          _holdProgress = (elapsedMs / confirmationMs).clamp(0.0, 1.0);
+          // Run auto-add countdown ONLY for normal auto EAN-13 (non-yellow)
+          if (!_isYellowOverlay && _displayStartTime != null) {
+            final elapsedMs = now.difference(_displayStartTime!).inMilliseconds;
+            _holdProgress = (elapsedMs / confirmationMs).clamp(0.0, 1.0);
 
-          // A short confirmation avoids duplicate reads without making the
-          // scanner feel unresponsive.
-          if (elapsedMs >= confirmationMs) {
-            if (_lastAddCompletedTime == null ||
+            if (elapsedMs >= confirmationMs) {
+              if (_lastAddCompletedTime == null ||
                 now.difference(_lastAddCompletedTime!).inMilliseconds >
-                    confirmationMs) {
-              _on2SecondDisplayCompleted(_trackedCode!);
+                confirmationMs) {
+                _on2SecondDisplayCompleted(_trackedCode!);
+                }
             }
           }
-        }
-      });
-    }
+        });
+      }
   }
 
   void _on2SecondDisplayCompleted(String code) {
@@ -123,12 +111,6 @@ class _ScannerViewportState extends State<ScannerViewport> {
     provider.addItemToActiveList(code, viaScan: true);
     _lastAddCompletedTime = DateTime.now();
 
-    // Pause the countdown instead of restarting it here. Restarting it
-    // immediately reused the last known (possibly stale) bounding box, so
-    // if the barcode had already left the frame the ring would silently
-    // fill up again and re-add the same item using a "ghost" position that
-    // no camera frame actually confirmed. Only a genuine new detection in
-    // _handleBarcodeDetect (below) is allowed to restart the timer.
     _displayStartTime = null;
     _holdProgress = 0.0;
   }
@@ -136,72 +118,83 @@ class _ScannerViewportState extends State<ScannerViewport> {
   void _handleBarcodeDetect(BarcodeCapture capture, Size viewportSize) {
     final now = DateTime.now();
     final List<Barcode> barcodes = capture.barcodes;
-    Barcode? validEanBarcode;
+    Barcode? validAutoEanBarcode;
+    Barcode? nonAutoBarcode;
 
-    Barcode? nonEanBarcode;
     for (final barcode in barcodes) {
       final code = barcode.rawValue;
-      if (code != null &&
-          barcode.format == BarcodeFormat.ean13 &&
-          EanValidator.validateEAN13(code)) {
-        validEanBarcode = barcode;
-        break;
-      }
       if (code != null && code.trim().isNotEmpty) {
-        nonEanBarcode ??= barcode;
+        // Only standard EAN-13 (excluding JAN codes starting with 45 or 49) can auto-add
+        if (barcode.format == BarcodeFormat.ean13 &&
+          EanValidator.validateEAN13(code) &&
+          !EanValidator.isJanCode(code)) {
+          validAutoEanBarcode = barcode;
+        break;
+          } else {
+            nonAutoBarcode ??= barcode;
+          }
       }
     }
 
-    if (validEanBarcode == null) {
-      final code = nonEanBarcode?.rawValue?.trim();
-      if (code != null) {
-        context.read<ScannerProvider>().setNonEanDetection(
-          code,
-          _barcodeFormatLabel(nonEanBarcode!.format),
-        );
+    if (validAutoEanBarcode != null) {
+      context.read<ScannerProvider>().clearNonEanDetection();
+
+      final code = validAutoEanBarcode.rawValue!;
+      final mappedRect = _projectBarcodeToViewport(
+        validBarcode: validAutoEanBarcode,
+        imageSize: capture.size,
+        viewportSize: viewportSize,
+      );
+
+      _lastDetectTime = now;
+      _isYellowOverlay = false;
+
+      if (_trackedCode != code) {
+        _trackedCode = code;
+        _displayStartTime = now;
+        _holdProgress = 0.0;
+        _targetRect = mappedRect;
+        _currentRect ??= mappedRect;
+        _showTrackingOverlay = true;
+      } else {
+        _targetRect = mappedRect;
+        _displayStartTime ??= now;
       }
-      return;
-    }
+    } else if (nonAutoBarcode != null) {
+      final code = nonAutoBarcode.rawValue!.trim();
+      final isJan = nonAutoBarcode.format == BarcodeFormat.ean13 &&
+      EanValidator.validateEAN13(code) &&
+      EanValidator.isJanCode(code);
+      final formatLabel =
+      isJan ? 'JAN' : _barcodeFormatLabel(nonAutoBarcode.format);
 
-    context.read<ScannerProvider>().clearNonEanDetection();
+      context.read<ScannerProvider>().setNonEanDetection(code, formatLabel);
 
-    final code = validEanBarcode.rawValue!;
-    final imageSize = capture.size;
+      final mappedRect = _projectBarcodeToViewport(
+        validBarcode: nonAutoBarcode,
+        imageSize: capture.size,
+        viewportSize: viewportSize,
+      );
 
-    // Calculate accurate bounding box projected onto portrait viewport screen
-    final mappedRect = _projectBarcodeToViewport(
-      validEanBarcode: validEanBarcode,
-      imageSize: imageSize,
-      viewportSize: viewportSize,
-    );
-
-    _lastDetectTime = now;
-
-    if (_trackedCode != code) {
-      // New barcode target displayed -> start 2-second countdown AFTER displayed
+      _lastDetectTime = now;
+      _isYellowOverlay = true;
       _trackedCode = code;
-      _displayStartTime = now;
-      _holdProgress = 0.0;
       _targetRect = mappedRect;
       _currentRect ??= mappedRect;
       _showTrackingOverlay = true;
-    } else {
-      // Update target position for 60 fps tracking lerp
-      _targetRect = mappedRect;
-      _displayStartTime ??= now;
+      _holdProgress = 0.0;
+      _displayStartTime = null; // Do not auto-add
     }
   }
 
-  /// Projects raw camera sensor barcode coordinates onto the portrait viewport screen
   Rect _projectBarcodeToViewport({
-    required Barcode validEanBarcode,
+    required Barcode validBarcode,
     required Size imageSize,
     required Size viewportSize,
   }) {
-    final corners = validEanBarcode.corners;
+    final corners = validBarcode.corners;
 
     if (imageSize.width <= 0 || imageSize.height <= 0 || corners.isEmpty) {
-      // Fallback center box if corners missing
       return Rect.fromCenter(
         center: Offset(viewportSize.width / 2, viewportSize.height / 2),
         width: 200,
@@ -209,16 +202,9 @@ class _ScannerViewportState extends State<ScannerViewport> {
       );
     }
 
-    // On Android, ML Kit has already rotated the barcode coordinates to the
-    // portrait preview, while BarcodeCapture.size remains the raw landscape
-    // camera buffer. Therefore the coordinate-space dimensions are swapped;
-    // applying a second point rotation is incorrect, but using the raw width
-    // and height is also incorrect and produces an error that grows at the
-    // right and lower edges.
     final imgW = imageSize.height;
     final imgH = imageSize.width;
 
-    // Calculate BoxFit.cover scale & offsets for viewport container
     final scale = max(viewportSize.width / imgW, viewportSize.height / imgH);
     final offsetX = (viewportSize.width - (imgW * scale)) / 2;
     final offsetY = (viewportSize.height - (imgH * scale)) / 2;
@@ -241,14 +227,11 @@ class _ScannerViewportState extends State<ScannerViewport> {
       maxY = max(maxY, screenY);
     }
 
-    // Keep only a small floor for unstable corner data. The prior 120x80
-    // floor made the overlay look detached from small or distant barcodes.
     double boxWidth = max(maxX - minX, 24.0);
     double boxHeight = max(maxY - minY, 24.0);
     double centerX = (minX + maxX) / 2;
     double centerY = (minY + maxY) / 2;
 
-    // Clamp box to viewport bounds
     centerX = centerX.clamp(
       boxWidth / 2 + 10,
       viewportSize.width - boxWidth / 2 - 10,
@@ -340,69 +323,66 @@ class _ScannerViewportState extends State<ScannerViewport> {
                           MobileScanner(
                             controller: _scannerController!,
                             onDetect: (capture) =>
-                                _handleBarcodeDetect(capture, viewportSize),
+                            _handleBarcodeDetect(capture, viewportSize),
                           )
-                        else
-                          const Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                FaIcon(
-                                  FontAwesomeIcons.camera,
-                                  color: Colors.white24,
-                                  size: 48,
-                                ),
-                                SizedBox(height: 12),
-                                Text(
-                                  'Câmera Desativada',
-                                  style: TextStyle(
-                                    color: Colors.white38,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
+                          else
+                            const Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  FaIcon(
+                                    FontAwesomeIcons.camera,
+                                    color: Colors.white24,
+                                    size: 48,
+                                  ),
+                                  SizedBox(height: 12),
+                                  Text(
+                                    'Câmera Desativada',
+                                    style: TextStyle(
+                                      color: Colors.white38,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            if (isScanning)
+                              AnimatedOpacity(
+                                duration: const Duration(milliseconds: 180),
+                                curve: Curves.easeOut,
+                                opacity: _showTrackingOverlay ? 1 : 0,
+                                child: CustomPaint(
+                                  size: viewportSize,
+                                  painter: BarcodeTrackingPainter(
+                                    targetRect: _currentRect ?? Rect.zero,
+                                    code: _trackedCode ?? '',
+                                    progress: _holdProgress,
+                                    confirmationSeconds:
+                                    provider.scanConfirmationMs / 1000,
+                                    isYellow: _isYellowOverlay,
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
-
-                        // Keep the overlay mounted so AnimatedOpacity can
-                        // animate both its entrance and its disappearance.
-                        if (isScanning)
-                          AnimatedOpacity(
-                            duration: const Duration(milliseconds: 180),
-                            curve: Curves.easeOut,
-                            opacity: _showTrackingOverlay ? 1 : 0,
-                            child: CustomPaint(
-                              size: viewportSize,
-                              painter: BarcodeTrackingPainter(
-                                targetRect: _currentRect ?? Rect.zero,
-                                code: _trackedCode ?? '',
-                                progress: _holdProgress,
-                                confirmationSeconds:
-                                    provider.scanConfirmationMs / 1000,
                               ),
-                            ),
-                          ),
 
-                        // Focus Ring animation
-                        if (_showFocusRing && _focusPos != null)
-                          Positioned(
-                            left: _focusPos!.dx - 40,
-                            top: _focusPos!.dy - 40,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 300),
-                              width: 80,
-                              height: 80,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: const Color(0xFFEC4899),
-                                  width: 2,
+                              if (_showFocusRing && _focusPos != null)
+                                Positioned(
+                                  left: _focusPos!.dx - 40,
+                                  top: _focusPos!.dy - 40,
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 300),
+                                    width: 80,
+                                    height: 80,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: const Color(0xFFEC4899),
+                                        width: 2,
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
-                          ),
-
                       ],
                     ),
                   ),
@@ -427,13 +407,13 @@ class _ScannerViewportState extends State<ScannerViewport> {
                   height: 48,
                   decoration: BoxDecoration(
                     color: torchActive
-                        ? Colors.amber
-                        : Colors.black.withValues(alpha: 0.6),
+                    ? Colors.amber
+                    : Colors.black.withValues(alpha: 0.6),
                     shape: BoxShape.circle,
                     border: Border.all(
                       color: torchActive
-                          ? Colors.amberAccent
-                          : Colors.white.withValues(alpha: 0.1),
+                      ? Colors.amberAccent
+                      : Colors.white.withValues(alpha: 0.1),
                     ),
                   ),
                   child: Center(
@@ -447,125 +427,128 @@ class _ScannerViewportState extends State<ScannerViewport> {
               ),
             ),
 
-          // Start / Stop Scanner Button Overlay
-          Positioned(
-            bottom: 24,
-            left: 24,
-            right: 24,
-            child: SizedBox(
-              height: 52,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: isScanning ? Colors.redAccent : Colors.white,
-                  foregroundColor: isScanning ? Colors.white : Colors.black,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
+            // Start / Stop Scanner Button
+            Positioned(
+              bottom: 24,
+              left: 24,
+              right: 24,
+              child: SizedBox(
+                height: 52,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                    isScanning ? Colors.redAccent : Colors.white,
+                    foregroundColor: isScanning ? Colors.white : Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      elevation: 8,
                   ),
-                  elevation: 8,
-                ),
-                onPressed: () async {
-                  if (isScanning) {
-                    await _scannerController?.stop();
-                    provider.setScanning(false);
-                    setState(() {
-                      _trackedCode = null;
-                      _targetRect = null;
-                      _currentRect = null;
-                      _holdProgress = 0.0;
-                      _displayStartTime = null;
-                      _lastDetectTime = null;
-                      _showTrackingOverlay = false;
-                    });
-                    provider.clearNonEanDetection();
-                  } else {
-                    // autoStart is false, so we are always the one who
-                    // (re)starts the camera. start() on the same controller
-                    // after a stop() is what used to leave the preview
-                    // black, so we start it explicitly here and nowhere else.
-                    await _scannerController?.start();
-                    if (!mounted) return;
-                    provider.setScanning(true);
-                  }
-                },
-                icon: FaIcon(
-                  isScanning ? FontAwesomeIcons.stop : FontAwesomeIcons.camera,
-                  size: 16,
-                ),
-                label: Text(
-                  isScanning ? 'PARAR CÂMERA' : 'INICIAR CÂMERA',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 14,
-                    letterSpacing: 1.0,
+                  onPressed: () async {
+                    if (isScanning) {
+                      await _scannerController?.stop();
+                      provider.setScanning(false);
+                      setState(() {
+                        _trackedCode = null;
+                        _targetRect = null;
+                        _currentRect = null;
+                        _holdProgress = 0.0;
+                        _displayStartTime = null;
+                        _lastDetectTime = null;
+                        _showTrackingOverlay = false;
+                        _isYellowOverlay = false;
+                      });
+                      provider.clearNonEanDetection();
+                    } else {
+                      await _scannerController?.start();
+                      if (!mounted) return;
+                      provider.setScanning(true);
+                    }
+                  },
+                  icon: FaIcon(
+                    isScanning ? FontAwesomeIcons.stop : FontAwesomeIcons.camera,
+                    size: 16,
+                  ),
+                  label: Text(
+                    isScanning ? 'PARAR CÂMERA' : 'INICIAR CÂMERA',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      letterSpacing: 1.0,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
         ],
       ),
     );
   }
 }
 
-/// CustomPainter rendering the tracking square and a short confirmation ring.
 class BarcodeTrackingPainter extends CustomPainter {
   final Rect targetRect;
   final String code;
   final double progress;
   final double confirmationSeconds;
+  final bool isYellow;
 
   BarcodeTrackingPainter({
     required this.targetRect,
     required this.code,
     required this.progress,
     required this.confirmationSeconds,
+    this.isYellow = false,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final rect = targetRect.inflate(8.0);
 
-    const pinkColor = Color(0xFFEC4899);
-    const purpleColor = Color(0xFF9333EA);
+    final primaryColor =
+    isYellow ? const Color(0xFFEAB308) : const Color(0xFFEC4899);
+    final secondaryColor =
+    isYellow ? const Color(0xFFFACC15) : const Color(0xFF9333EA);
 
-    // 1. Draw only the base bounding box border; the camera image remains
-    // unobscured while the confirmation progress travels around the edge.
+    // 1. Draw base bounding box border
     final borderPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.5)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5;
+    ..color = isYellow
+    ? const Color(0xFFEAB308).withValues(alpha: 0.8)
+    : Colors.white.withValues(alpha: 0.5)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.5;
     canvas.drawRRect(
       RRect.fromRectAndRadius(rect, const Radius.circular(16)),
       borderPaint,
     );
 
-    // 2. Draw confirmation progress ring along the perimeter
-    if (progress > 0) {
+    // 2. Draw confirmation progress ring (only for auto EAN-13 codes)
+    if (!isYellow && progress > 0) {
       final progressPaint = Paint()
-        ..shader = const LinearGradient(
-          colors: [pinkColor, purpleColor],
-        ).createShader(rect)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 4.5
-        ..strokeCap = StrokeCap.round;
+      ..shader = LinearGradient(
+        colors: [primaryColor, secondaryColor],
+      ).createShader(rect)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4.5
+      ..strokeCap = StrokeCap.round;
 
       final path = Path()
-        ..addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(16)));
+      ..addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(16)));
 
       final pathMetrics = path.computeMetrics();
       for (final metric in pathMetrics) {
-        final extractPath = metric.extractPath(0.0, metric.length * progress);
+        final extractPath =
+        metric.extractPath(0.0, metric.length * progress);
         canvas.drawPath(extractPath, progressPaint);
       }
     }
 
-    // 3. Draw Corner Brackets (L-shapes)
+    // 3. Draw Corner Brackets
     final bracketPaint = Paint()
-      ..color = pinkColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4.0
-      ..strokeCap = StrokeCap.round;
+    ..color = primaryColor
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 4.0
+    ..strokeCap = StrokeCap.round;
 
     const cornerLength = 18.0;
 
@@ -617,18 +600,27 @@ class BarcodeTrackingPainter extends CustomPainter {
       bracketPaint,
     );
 
-    // 4. Draw the decoded value and the short confirmation countdown badge
-    final remainingSecs = max(
-      0.0,
-      confirmationSeconds - (progress * confirmationSeconds),
-    ).toStringAsFixed(1);
+    // 4. Draw decoded value and countdown badge
+    final String text;
+    if (isYellow) {
+      text = code;
+    } else {
+      final remainingSecs = max(
+        0.0,
+        confirmationSeconds - (progress * confirmationSeconds),
+      ).toStringAsFixed(1);
+      text = '$code • ${remainingSecs}s';
+    }
+
     final textSpan = TextSpan(
-      text: '$code • ${remainingSecs}s',
-      style: const TextStyle(
-        color: Colors.white,
+      text: text,
+      style: TextStyle(
+        color: isYellow ? Colors.black : Colors.white,
         fontSize: 12,
         fontWeight: FontWeight.bold,
-        shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+        shadows: isYellow
+        ? null
+        : const [Shadow(color: Colors.black, blurRadius: 4)],
       ),
     );
 
@@ -638,8 +630,10 @@ class BarcodeTrackingPainter extends CustomPainter {
     )..layout();
 
     final textBgPaint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.85)
-      ..style = PaintingStyle.fill;
+    ..color = isYellow
+    ? const Color(0xFFEAB308)
+    : Colors.black.withValues(alpha: 0.85)
+    ..style = PaintingStyle.fill;
 
     final textOffset = Offset(
       rect.left + (rect.width - textPainter.width) / 2,
@@ -664,8 +658,9 @@ class BarcodeTrackingPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant BarcodeTrackingPainter oldDelegate) {
     return oldDelegate.targetRect != targetRect ||
-        oldDelegate.progress != progress ||
-        oldDelegate.code != code ||
-        oldDelegate.confirmationSeconds != confirmationSeconds;
+    oldDelegate.progress != progress ||
+    oldDelegate.code != code ||
+    oldDelegate.confirmationSeconds != confirmationSeconds ||
+    oldDelegate.isYellow != isYellow;
   }
 }
