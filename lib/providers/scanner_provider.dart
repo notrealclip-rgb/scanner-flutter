@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/collection_model.dart';
+import '../models/detected_barcode.dart';
 import '../services/storage_service.dart';
 
 class ScannerProvider extends ChangeNotifier {
@@ -18,9 +19,20 @@ class ScannerProvider extends ChangeNotifier {
   String? _feedbackText;
   Timer? _feedbackTimer;
 
-  // Non-EAN-13 / JAN barcode currently being seen by the camera.
-  String? _nonEanCode;
-  String? _nonEanFormat;
+  // Barcodes currently visible in the camera preview (or just captured by an
+  // external hardware scanner) that are awaiting user confirmation before
+  // being added to the active list. Keyed by raw code so multiple distinct
+  // formats (EAN-13, Code128, QR-Code, ...) can be tracked at once. Using a
+  // LinkedHashMap (the default Map literal) keeps insertion order stable so
+  // the UI list doesn't jump around between frames.
+  final Map<String, DetectedBarcode> _pendingBarcodes = {};
+
+  // Codes that were just added (or explicitly dismissed) and should be
+  // ignored for a little while even if the camera keeps reporting them,
+  // so a confirmed/dismissed prompt doesn't instantly reappear while the
+  // same physical barcode is still sitting in front of the lens.
+  final Map<String, DateTime> _recentlyHandled = {};
+  static const _pendingCooldown = Duration(milliseconds: 2500);
 
   // Getters
   bool get isLoading => _isLoading;
@@ -28,8 +40,9 @@ class ScannerProvider extends ChangeNotifier {
   bool get isScanning => _isScanning;
   bool get torchActive => _torchActive;
   String? get feedbackText => _feedbackText;
-  String? get nonEanCode => _nonEanCode;
-  String? get nonEanFormat => _nonEanFormat;
+  List<DetectedBarcode> get pendingBarcodes =>
+      List.unmodifiable(_pendingBarcodes.values);
+  bool get hasPendingBarcodes => _pendingBarcodes.isNotEmpty;
   int get scanConfirmationMs => _scanConfirmationMs;
 
   AppStateData get appState => _appState;
@@ -125,19 +138,74 @@ class ScannerProvider extends ChangeNotifier {
     return true;
   }
 
-  /// Called by the camera overlay while a non-auto barcode (non-EAN or JAN) is in view.
-  void setNonEanDetection(String code, String format) {
-    if (_nonEanCode == code && _nonEanFormat == format) return;
-    _nonEanCode = code;
-    _nonEanFormat = format;
+  /// Called (every camera frame) by the viewport with the full set of
+  /// barcodes currently visible that require explicit confirmation — i.e.
+  /// everything except a lone auto-adding EAN-13, which is handled by its
+  /// own hold-to-confirm countdown directly on the preview. Supports any
+  /// mix of formats (EAN-13, Code128, QR-Code, etc.) shown simultaneously.
+  void syncDetectedBarcodes(List<DetectedBarcode> detected) {
+    final now = DateTime.now();
+    _recentlyHandled.removeWhere(
+      (_, handledAt) => now.difference(handledAt) > _pendingCooldown,
+    );
+
+    final filtered = _recentlyHandled.isEmpty
+        ? detected
+        : detected.where((d) => !_recentlyHandled.containsKey(d.code)).toList();
+
+    final newKeys = filtered.map((d) => d.code).toSet();
+    final currentKeys = _pendingBarcodes.keys.toSet();
+    if (newKeys.length == currentKeys.length &&
+        newKeys.containsAll(currentKeys)) {
+      // Same set of codes as last frame (labels/format for a given code
+      // never change), nothing to update.
+      return;
+    }
+
+    _pendingBarcodes.removeWhere((code, _) => !newKeys.contains(code));
+    for (final barcode in filtered) {
+      _pendingBarcodes[barcode.code] = barcode;
+    }
     notifyListeners();
   }
 
-  void clearNonEanDetection() {
-    if (_nonEanCode == null && _nonEanFormat == null) return;
-    _nonEanCode = null;
-    _nonEanFormat = null;
+  /// User confirmed they want a detected barcode added to the active list.
+  void confirmPendingBarcode(String code) {
+    final barcode = _pendingBarcodes[code];
+    if (barcode == null) return;
+    _pendingBarcodes.remove(code);
+    _recentlyHandled[code] = DateTime.now();
+    addItemToActiveList(code, viaScan: barcode.fromCamera);
+  }
+
+  /// User dismissed a detected barcode without adding it.
+  void dismissPendingBarcode(String code) {
+    if (_pendingBarcodes.remove(code) != null) {
+      _recentlyHandled[code] = DateTime.now();
+      notifyListeners();
+    }
+  }
+
+  void clearPendingBarcodes() {
+    _recentlyHandled.clear();
+    if (_pendingBarcodes.isEmpty) return;
+    _pendingBarcodes.clear();
     notifyListeners();
+  }
+
+  /// Handles a code captured by an external keyboard-wedge hardware
+  /// scanner (e.g. the M40-6761L10 handheld's built-in 2D imager, or any
+  /// Bluetooth/USB scanner configured in "keyboard emulation" mode). Those
+  /// devices are triggered by a deliberate button press, so — unlike the
+  /// passive camera preview, which may see several codes at once — the
+  /// scanned code is added immediately, mirroring fast hand-held inventory
+  /// workflows.
+  void registerHardwareScan(String code) {
+    final trimmed = code.trim();
+    if (trimmed.isEmpty) return;
+    // addItemToActiveList already raises a descriptive feedback toast
+    // ("Novo Item: ..." / "Adicionado: ... (xN)"), so nothing else to do.
+    addItemToActiveList(trimmed, viaScan: true);
   }
 
   void addItemToActiveList(String code, {bool viaScan = false}) {
@@ -146,6 +214,11 @@ class ScannerProvider extends ChangeNotifier {
 
     final trimmed = code.trim();
     if (trimmed.isEmpty) return;
+
+    // Prevents this exact code from instantly reappearing in the pending
+    // confirmation list while it's still sitting in the camera's view
+    // right after being added (covers the auto-add hold-timer path too).
+    _recentlyHandled[trimmed] = DateTime.now();
 
     // Trigger haptic vibration for camera additions
     if (viaScan) {
