@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
@@ -17,23 +18,107 @@ class ScannerHomeScreen extends StatefulWidget {
   State<ScannerHomeScreen> createState() => _ScannerHomeScreenState();
 }
 
-class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
+class _ScannerHomeScreenState extends State<ScannerHomeScreen>
+    with WidgetsBindingObserver {
   final TextEditingController _manualController = TextEditingController();
+  final FocusNode _manualFocusNode = FocusNode(debugLabel: 'ManualEntry');
   bool _showCollectionsModal = false;
   bool _isForcedNewList = false;
   bool _isFabMenuOpen = false;
 
+  // Support for physical "keyboard wedge" scanners whose output method is
+  // set to "Input Method" (e.g. the M40-6761L10 handheld's built-in 2D
+  // imager). In that output mode the device registers its scan engine as
+  // the active Android input method, so pulling the trigger injects the
+  // decoded text straight into whichever text field currently has focus -
+  // exactly as if it had been typed - usually followed by an Enter. So the
+  // fix is simply to make sure the manual entry field stays focused and
+  // ready while this mode is enabled, and to keep re-focusing it after
+  // each scan so consecutive trigger-pulls keep working.
+  bool _hardwareReaderActive = false;
+  Timer? _hardwareReaderDebounce;
+  int _lastManualTextLength = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _hardwareReaderDebounce?.cancel();
     _manualController.dispose();
+    _manualFocusNode.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Re-claim focus for the physical reader after coming back from the
+    // background (e.g. after switching apps), so the M40-6761L10 keeps
+    // working without the user needing to tap the field again.
+    if (state == AppLifecycleState.resumed && _hardwareReaderActive) {
+      _requestManualFocus();
+    }
+  }
+
+  void _requestManualFocus() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _hardwareReaderActive) {
+        FocusScope.of(context).requestFocus(_manualFocusNode);
+      }
+    });
+  }
+
+  void _toggleHardwareReader() {
+    setState(() => _hardwareReaderActive = !_hardwareReaderActive);
+    final provider = context.read<ScannerProvider>();
+    if (_hardwareReaderActive) {
+      _requestManualFocus();
+      provider.showFeedback(
+        'Leitor físico ativo — aponte e dispare (M40-6761L10)',
+      );
+    } else {
+      _manualFocusNode.unfocus();
+      provider.showFeedback('Leitor físico desativado');
+    }
+  }
+
+  void _handleManualTextChanged(String text) {
+    _hardwareReaderDebounce?.cancel();
+
+    // Devices in "Input Method" output mode almost always append an Enter,
+    // which arrives via onSubmitted below. As a safety net for
+    // configurations that don't send one, if a big chunk of text lands in
+    // one go (an IME "commitText" call, not a human keystroke) and then
+    // nothing changes for a short beat, treat it as a completed scan.
+    final grew = text.length - _lastManualTextLength;
+    _lastManualTextLength = text.length;
+
+    if (_hardwareReaderActive && grew >= 4) {
+      _hardwareReaderDebounce = Timer(const Duration(milliseconds: 350), () {
+        if (_manualController.text.trim() == text.trim() && text.isNotEmpty) {
+          _addManual();
+        }
+      });
+    }
   }
 
   void _addManual() {
     final code = _manualController.text.trim();
     if (code.isNotEmpty) {
-      context.read<ScannerProvider>().addItemToActiveList(code);
+      if (_hardwareReaderActive) {
+        context.read<ScannerProvider>().registerHardwareScan(code);
+      } else {
+        context.read<ScannerProvider>().addItemToActiveList(code);
+      }
       _manualController.clear();
+      _lastManualTextLength = 0;
+      if (_hardwareReaderActive) {
+        _requestManualFocus();
+      }
     }
   }
 
@@ -450,7 +535,9 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
                         const ScannerStatusZone(),
                         const SizedBox(height: 12),
 
-                        // Manual Entry Field
+                        // Manual Entry Field (also the capture target for
+                        // hardware scanners using "Input Method" output,
+                        // like the M40-6761L10 - see the toggle button)
                         Container(
                           padding: const EdgeInsets.all(6),
                           decoration: BoxDecoration(
@@ -459,33 +546,70 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen> {
                             ).withValues(alpha: 0.4),
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
-                              color: const Color(
-                                0xFF374151,
-                              ).withValues(alpha: 0.5),
+                              color: _hardwareReaderActive
+                                  ? const Color(0xFFEC4899)
+                                      .withValues(alpha: 0.6)
+                                  : const Color(
+                                      0xFF374151,
+                                    ).withValues(alpha: 0.5),
                             ),
                           ),
                           child: Row(
                             children: [
+                              Tooltip(
+                                message: _hardwareReaderActive
+                                    ? 'Leitor físico ativo (toque para desativar)'
+                                    : 'Ativar leitor físico M40-6761L10',
+                                child: InkWell(
+                                  onTap: _toggleHardwareReader,
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: _hardwareReaderActive
+                                          ? const Color(0xFFEC4899)
+                                          : const Color(0xFF374151),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Center(
+                                      child: FaIcon(
+                                        FontAwesomeIcons.microchip,
+                                        color: _hardwareReaderActive
+                                            ? Colors.white
+                                            : Colors.white70,
+                                        size: 14,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
                               Expanded(
                                 child: Padding(
                                   padding: const EdgeInsets.only(left: 12),
                                   child: TextField(
                                     controller: _manualController,
-                                    keyboardType: TextInputType.number,
+                                    focusNode: _manualFocusNode,
+                                    keyboardType: _hardwareReaderActive
+                                        ? TextInputType.text
+                                        : TextInputType.number,
                                     textInputAction: TextInputAction.done,
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 14,
                                       fontWeight: FontWeight.w600,
                                     ),
-                                    decoration: const InputDecoration(
-                                      hintText: 'Digitar código manualmente...',
-                                      hintStyle: TextStyle(
+                                    decoration: InputDecoration(
+                                      hintText: _hardwareReaderActive
+                                          ? 'Aguardando leitor físico...'
+                                          : 'Digitar código manualmente...',
+                                      hintStyle: const TextStyle(
                                         color: Color(0xFF9CA3AF),
                                         fontSize: 14,
                                       ),
                                       border: InputBorder.none,
                                     ),
+                                    onChanged: _handleManualTextChanged,
                                     onSubmitted: (_) => _addManual(),
                                   ),
                                 ),
