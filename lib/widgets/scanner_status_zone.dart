@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
+import '../models/detected_barcode.dart';
 import '../providers/scanner_provider.dart';
 import 'glass_card.dart';
 
 /// A single dynamic status strip shown right below the camera preview.
 ///
-/// This replaces what used to be two separate widgets (the persistent
-/// status zone + a separate transient feedback toast). It now owns all of
-/// the states that can appear in that slot and animates between them, so
-/// there's only ever one widget occupying that space:
-///  - highest priority: a non-EAN-13 barcode is in view -> prompt asking
-///    whether to add it anyway, with a button to do so.
+/// It owns all of the states that can appear in that slot and animates
+/// between them, so there's only ever one widget occupying that space:
+///  - highest priority: one or more barcodes are currently detected in the
+///    camera preview and need an explicit decision -> a stacked list of
+///    "add this?" prompts, one per barcode, regardless of format (EAN-13,
+///    Code128, QR-Code, ...) so they can all be reviewed at the same time.
 ///  - next: a transient feedback message (e.g. "Novo Item: ...") shown for
 ///    a few seconds right after something happens, then fades back out.
 ///  - default/fallback: the active list name ("Lista ativa: ..."), which
@@ -22,15 +23,15 @@ class ScannerStatusZone extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<ScannerProvider>();
-    final nonEanCode = provider.nonEanCode;
+    final pending = provider.pendingBarcodes;
     final feedbackMsg = provider.feedbackText;
 
     late final Widget content;
     late final String stateKey;
 
-    if (nonEanCode != null) {
-      stateKey = 'non_ean';
-      content = _NonEanPrompt(code: nonEanCode, format: provider.nonEanFormat);
+    if (pending.isNotEmpty) {
+      stateKey = 'pending:${pending.map((b) => b.code).join(',')}';
+      content = _PendingBarcodesPanel(barcodes: pending);
     } else if (feedbackMsg != null) {
       stateKey = 'feedback:$feedbackMsg';
       content = _FeedbackBanner(message: feedbackMsg);
@@ -129,18 +130,19 @@ class _FeedbackBanner extends StatelessWidget {
   }
 }
 
-class _NonEanPrompt extends StatelessWidget {
-  final String code;
-  final String? format;
+/// Stacked list of "add this?" prompts, one per barcode currently detected
+/// in the camera preview. Supports any mix of formats shown at once.
+class _PendingBarcodesPanel extends StatelessWidget {
+  final List<DetectedBarcode> barcodes;
 
-  const _NonEanPrompt({required this.code, required this.format});
+  const _PendingBarcodesPanel({required this.barcodes});
 
   @override
   Widget build(BuildContext context) {
     return GlassCard(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      backgroundColor: Colors.amber.withValues(alpha: 0.12),
-      border: Border.all(color: Colors.amber.withValues(alpha: 0.5)),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      backgroundColor: Colors.amber.withValues(alpha: 0.10),
+      border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -148,16 +150,16 @@ class _NonEanPrompt extends StatelessWidget {
           Row(
             children: [
               const FaIcon(
-                FontAwesomeIcons.triangleExclamation,
+                FontAwesomeIcons.barcode,
                 color: Colors.amber,
                 size: 14,
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Código não EAN-13 identificado'
-                  '${format != null ? ' ($format)' : ''}. '
-                  'Adicionar mesmo assim?',
+                  barcodes.length == 1
+                      ? '1 código detectado. Adicionar à lista?'
+                      : '${barcodes.length} códigos detectados. Adicionar à lista?',
                   style: const TextStyle(
                     color: Colors.amber,
                     fontWeight: FontWeight.bold,
@@ -167,42 +169,113 @@ class _NonEanPrompt extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            code,
-            style: const TextStyle(
-              color: Colors.white,
-              fontFamily: 'monospace',
-              fontWeight: FontWeight.bold,
-              fontSize: 13,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
           const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            height: 38,
-            child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.amber,
-                foregroundColor: Colors.black,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: barcodes.length > 3 ? 220 : double.infinity,
+            ),
+            child: barcodes.length > 3
+                ? ListView.separated(
+                    shrinkWrap: true,
+                    physics: const ClampingScrollPhysics(),
+                    itemCount: barcodes.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) =>
+                        _PendingBarcodeRow(barcode: barcodes[index]),
+                  )
+                : Column(
+                    children: [
+                      for (int i = 0; i < barcodes.length; i++) ...[
+                        if (i > 0) const SizedBox(height: 8),
+                        _PendingBarcodeRow(barcode: barcodes[i]),
+                      ],
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingBarcodeRow extends StatelessWidget {
+  final DetectedBarcode barcode;
+
+  const _PendingBarcodeRow({required this.barcode});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  barcode.format,
+                  style: const TextStyle(
+                    color: Colors.amberAccent,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 10,
+                    letterSpacing: 0.5,
+                  ),
                 ),
+                const SizedBox(height: 2),
+                Text(
+                  barcode.code,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          InkWell(
+            onTap: () =>
+                context.read<ScannerProvider>().dismissPendingBarcode(
+                      barcode.code,
+                    ),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.all(6.0),
+              child: FaIcon(
+                FontAwesomeIcons.xmark,
+                color: Colors.white.withValues(alpha: 0.5),
+                size: 14,
               ),
-              onPressed: () {
-                final provider = context.read<ScannerProvider>();
-                // This came from the camera, so it should vibrate just like
-                // any other scan-driven addition.
-                provider.addItemToActiveList(code, viaScan: true);
-                provider.clearNonEanDetection();
-              },
-              icon: const Icon(Icons.add_circle, size: 16),
-              label: const Text(
-                'ADICIONAR MESMO ASSIM',
-                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+            ),
+          ),
+          const SizedBox(width: 4),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.amber,
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              minimumSize: const Size(0, 36),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
               ),
+            ),
+            onPressed: () => context
+                .read<ScannerProvider>()
+                .confirmPendingBarcode(barcode.code),
+            icon: const Icon(Icons.add_circle, size: 15),
+            label: const Text(
+              'ADICIONAR',
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11),
             ),
           ),
         ],
