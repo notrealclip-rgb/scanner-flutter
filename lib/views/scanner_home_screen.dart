@@ -525,15 +525,16 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
                             ),
                           ],
                         ),
-                        const SizedBox(height: 20),
+                        const SizedBox(height: 20),                        // Camera preview is unnecessary while the physical
+                        // reader is active.
+                        if (!_hardwareReaderActive) ...[
+                          scanner_viewport.ScannerViewport(),
+                          const SizedBox(height: 12),
 
-                        // Scanner Viewport
-                        scanner_viewport.ScannerViewport(),
-                        const SizedBox(height: 12),
-
-                        // Dynamic Status Zone
-                        scanner_status.ScannerStatusZone(),
-                        const SizedBox(height: 12),
+                          // Dynamic Status Zone
+                          scanner_status.ScannerStatusZone(),
+                          const SizedBox(height: 12),
+                        ],
 
                         // Manual Entry Field (also the capture target for
                         // hardware scanners using "Input Method" output,
@@ -590,9 +591,11 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
                                   child: TextField(
                                     controller: _manualController,
                                     focusNode: _manualFocusNode,
-                                    keyboardType: _hardwareReaderActive
-                                        ? TextInputType.text
-                                        : TextInputType.number,
+                                    // Suppress the soft keyboard in physical-reader mode while
+                                     // retaining focus for keyboard-wedge scan input.
+                                     keyboardType: _hardwareReaderActive
+                                         ? TextInputType.none
+                                         : TextInputType.number,
                                     textInputAction: TextInputAction.done,
                                     style: const TextStyle(
                                       color: Colors.white,
