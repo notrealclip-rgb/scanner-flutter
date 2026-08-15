@@ -6,8 +6,8 @@ import '../providers/scanner_provider.dart';
 import '../services/export_service.dart';
 import '../utils/ean_validator.dart';
 import '../widgets/glass_card.dart';
-import '../widgets/scanner_viewport.dart';
-import '../widgets/scanner_status_zone.dart';
+import '../widgets/scanner_viewport.dart' as scanner_viewport;
+import '../widgets/scanner_status_zone.dart' as scanner_status;
 import '../widgets/startup_dialog.dart';
 import '../widgets/collections_modal.dart';
 
@@ -528,11 +528,11 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
                         const SizedBox(height: 20),
 
                         // Scanner Viewport
-                        const ScannerViewport(),
+                        scanner_viewport.ScannerViewport(),
                         const SizedBox(height: 12),
 
                         // Dynamic Status Zone
-                        const ScannerStatusZone(),
+                        scanner_status.ScannerStatusZone(),
                         const SizedBox(height: 12),
 
                         // Manual Entry Field (also the capture target for
