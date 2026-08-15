@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 import '../providers/scanner_provider.dart';
@@ -66,9 +67,12 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
 
   void _requestManualFocus() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _hardwareReaderActive) {
-        FocusScope.of(context).requestFocus(_manualFocusNode);
-      }
+      if (!mounted || !_hardwareReaderActive) return;
+      FocusScope.of(context).requestFocus(_manualFocusNode);
+      // Keep the keyboard-wedge input connection alive, but explicitly hide
+      // Android's software keyboard. TextInputType.none can make some
+      // scanner IMEs fall back to slow key-by-key delivery, so do not use it.
+      SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
     });
   }
 
