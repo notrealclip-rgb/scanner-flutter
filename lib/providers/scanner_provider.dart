@@ -193,13 +193,10 @@ class ScannerProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Handles a code captured by an external keyboard-wedge hardware
-  /// scanner (e.g. the M40-6761L10 handheld's built-in 2D imager, or any
-  /// Bluetooth/USB scanner configured in "keyboard emulation" mode). Those
-  /// devices are triggered by a deliberate button press, so — unlike the
-  /// passive camera preview, which may see several codes at once — the
-  /// scanned code is added immediately, mirroring fast hand-held inventory
-  /// workflows.
+  /// Handles a complete barcode delivered by a native hardware scanner
+  /// broadcast (the M40-6761L10 is configured for Broadcast Output). The
+  /// scanner sends the decoded value as one event, so this path does not use
+  /// keyboard emulation or a Flutter TextField.
   void registerHardwareScan(String code) {
     final trimmed = code.trim();
     if (trimmed.isEmpty) return;
