@@ -32,6 +32,8 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
   bool _hardwareReaderActive = false;
   String? _lastHardwareBarcode;
   late final AnimationController _readerPulseController;
+  late final AnimationController _readerSweepController;
+  bool _appIsFocused = false;
   StreamSubscription<String>? _scannerSubscription;
   final ScannerBroadcastService _scannerBroadcastService =
       ScannerBroadcastService();
@@ -44,6 +46,12 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     );
+    _readerSweepController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1250),
+    );
+    _appIsFocused =
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
   }
 
   @override
@@ -51,14 +59,30 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     _scannerSubscription?.cancel();
     _readerPulseController.dispose();
+    _readerSweepController.dispose();
     _manualController.dispose();
     _manualFocusNode.dispose();
     super.dispose();
   }
 
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Nothing needs to be focused for Broadcast Output. The native receiver
-    // is registered only while physical-reader mode is enabled.
+    final focused = state == AppLifecycleState.resumed;
+    if (_appIsFocused == focused) return;
+
+    _appIsFocused = focused;
+
+    // Do not leave the M40 broadcast receiver subscribed while another app is
+    // in the foreground. This is important because the scanner can continue
+    // broadcasting even when this Flutter app is paused/backgrounded.
+    if (!_appIsFocused) {
+      _stopScannerBroadcastListener();
+      return;
+    }
+
+    if (_hardwareReaderActive) {
+      _startScannerBroadcastListener();
+    }
   }
 
   void _toggleHardwareReader() {
@@ -71,14 +95,19 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
 
     if (next) {
       _readerPulseController.repeat(reverse: true);
+      _readerSweepController.repeat();
       _manualFocusNode.unfocus();
-      _startScannerBroadcastListener();
+      if (_appIsFocused) {
+        _startScannerBroadcastListener();
+      }
       context.read<ScannerProvider>().showFeedback(
         'Leitor físico ativo — aponte e dispare (M40-6761L10)',
       );
     } else {
       _readerPulseController.stop();
       _readerPulseController.value = 0;
+      _readerSweepController.stop();
+      _readerSweepController.value = 0;
       _stopScannerBroadcastListener();
       _manualFocusNode.canRequestFocus = true;
       _manualFocusNode.unfocus();
@@ -86,11 +115,19 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
     }
   }
 
-  void _startScannerBroadcastListener() {
-    _scannerSubscription?.cancel();
+  Future<void> _startScannerBroadcastListener() async {
+    await _scannerSubscription?.cancel();
+    _scannerSubscription = null;
+
+    if (!mounted || !_hardwareReaderActive || !_appIsFocused) return;
+
     _scannerSubscription = _scannerBroadcastService.scans.listen(
       (barcode) {
-        if (!mounted || !_hardwareReaderActive) return;
+        // A broadcast can already be queued when Android transitions the app
+        // to the background. Guard the delivery as well as unregistering the
+        // receiver in didChangeAppLifecycleState, so a background scan can
+        // never mutate the inventory.
+        if (!mounted || !_hardwareReaderActive || !_appIsFocused) return;
         setState(() => _lastHardwareBarcode = barcode);
         context.read<ScannerProvider>().registerHardwareScan(barcode);
       },
@@ -110,7 +147,10 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
 
   Widget _buildPhysicalReaderPanel() {
     return AnimatedBuilder(
-      animation: _readerPulseController,
+      animation: Listenable.merge([
+        _readerPulseController,
+        _readerSweepController,
+      ]),
       builder: (context, child) {
         final pulse = _readerPulseController.value;
         final glow = 0.10 + (pulse * 0.12);
@@ -215,32 +255,100 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
                 ],
               ),
               const SizedBox(height: 16),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: SizedBox(
-                  height: 3,
-                  child: Stack(
-                    children: [
-                      Container(color: Colors.white.withValues(alpha: 0.06)),
-                      FractionallySizedBox(
-                        widthFactor: 0.32 + pulse * 0.20,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFFEC4899), Color(0xFFA855F7)],
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFFEC4899).withValues(alpha: 0.55),
-                                blurRadius: 8,
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final trackWidth = constraints.maxWidth;
+                  final beamWidth = (trackWidth * 0.30).clamp(64.0, 150.0);
+                  final sweep = _readerSweepController.value;
+                  final beamLeft =
+                      -beamWidth + ((trackWidth + beamWidth) * sweep);
+
+                  return ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: SizedBox(
+                      height: 7,
+                      child: Stack(
+                        clipBehavior: Clip.hardEdge,
+                        children: [
+                          DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  Colors.white.withValues(alpha: 0.045),
+                                  const Color(0xFFEC4899).withValues(alpha: 0.10),
+                                  const Color(0xFFA855F7).withValues(alpha: 0.07),
+                                ],
                               ),
-                            ],
+                            ),
+                            child: const SizedBox.expand(),
                           ),
-                        ),
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            top: 2,
+                            child: Container(
+                              height: 2,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    const Color(0xFFEC4899).withValues(alpha: 0.20),
+                                    const Color(0xFFA855F7).withValues(alpha: 0.28),
+                                    const Color(0xFFEC4899).withValues(alpha: 0.20),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            left: beamLeft,
+                            top: 0,
+                            width: beamWidth,
+                            height: 7,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [
+                                    Color(0x00EC4899),
+                                    Color(0xFFEC4899),
+                                    Color(0xFFA855F7),
+                                    Color(0x00A855F7),
+                                  ],
+                                  stops: [0.0, 0.38, 0.62, 1.0],
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: const Color(0xFFEC4899)
+                                        .withValues(alpha: 0.34 + pulse * 0.18),
+                                    blurRadius: 10 + pulse * 5,
+                                    spreadRadius: 1,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            right: 0,
+                            top: 0,
+                            bottom: 0,
+                            child: FractionallySizedBox(
+                              widthFactor: 0.12 + pulse * 0.04,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      const Color(0xFFA855F7).withValues(alpha: 0.0),
+                                      const Color(0xFFA855F7).withValues(alpha: 0.24),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: 12),
               AnimatedSwitcher(
@@ -1227,3 +1335,4 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
     );
   }
 }
+,
