@@ -1335,4 +1335,3 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
     );
   }
 }
-,
