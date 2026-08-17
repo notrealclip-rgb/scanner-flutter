@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 import '../providers/scanner_provider.dart';
 import '../services/export_service.dart';
+import '../services/scanner_broadcast_service.dart';
 import '../utils/ean_validator.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/scanner_viewport.dart' as scanner_viewport;
@@ -27,18 +27,12 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
   bool _isForcedNewList = false;
   bool _isFabMenuOpen = false;
 
-  // Support for physical "keyboard wedge" scanners whose output method is
-  // set to "Input Method" (e.g. the M40-6761L10 handheld's built-in 2D
-  // imager). In that output mode the device registers its scan engine as
-  // the active Android input method, so pulling the trigger injects the
-  // decoded text straight into whichever text field currently has focus -
-  // exactly as if it had been typed - usually followed by an Enter. So the
-  // fix is simply to make sure the manual entry field stays focused and
-  // ready while this mode is enabled, and to keep re-focusing it after
-  // each scan so consecutive trigger-pulls keep working.
+  // Physical reader mode uses the M40 scanner's Broadcast Output directly.
+  // No TextField focus, keyboard emulation, or TextInput.hide is involved.
   bool _hardwareReaderActive = false;
-  Timer? _hardwareReaderDebounce;
-  int _lastManualTextLength = 0;
+  StreamSubscription<String>? _scannerSubscription;
+  final ScannerBroadcastService _scannerBroadcastService =
+      ScannerBroadcastService();
 
   @override
   void initState() {
@@ -49,81 +43,65 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _hardwareReaderDebounce?.cancel();
+    _scannerSubscription?.cancel();
     _manualController.dispose();
     _manualFocusNode.dispose();
     super.dispose();
   }
 
-  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Re-claim focus for the physical reader after coming back from the
-    // background (e.g. after switching apps), so the M40-6761L10 keeps
-    // working without the user needing to tap the field again.
-    if (state == AppLifecycleState.resumed && _hardwareReaderActive) {
-      _requestManualFocus();
-    }
-  }
-
-  void _requestManualFocus() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_hardwareReaderActive) return;
-      FocusScope.of(context).requestFocus(_manualFocusNode);
-      // Keep the keyboard-wedge input connection alive, but explicitly hide
-      // Android's software keyboard. TextInputType.none can make some
-      // scanner IMEs fall back to slow key-by-key delivery, so do not use it.
-      SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
-    });
+    // Nothing needs to be focused for Broadcast Output. The native receiver
+    // is registered only while physical-reader mode is enabled.
   }
 
   void _toggleHardwareReader() {
-    setState(() => _hardwareReaderActive = !_hardwareReaderActive);
-    final provider = context.read<ScannerProvider>();
-    if (_hardwareReaderActive) {
-      _requestManualFocus();
-      provider.showFeedback(
+    final next = !_hardwareReaderActive;
+    setState(() {
+      _hardwareReaderActive = next;
+      _manualFocusNode.canRequestFocus = !next;
+    });
+
+    if (next) {
+      _manualFocusNode.unfocus();
+      _startScannerBroadcastListener();
+      context.read<ScannerProvider>().showFeedback(
         'Leitor físico ativo — aponte e dispare (M40-6761L10)',
       );
     } else {
+      _stopScannerBroadcastListener();
+      _manualFocusNode.canRequestFocus = true;
       _manualFocusNode.unfocus();
-      provider.showFeedback('Leitor físico desativado');
+      context.read<ScannerProvider>().showFeedback('Leitor físico desativado');
     }
   }
 
-  void _handleManualTextChanged(String text) {
-    _hardwareReaderDebounce?.cancel();
+  void _startScannerBroadcastListener() {
+    _scannerSubscription?.cancel();
+    _scannerSubscription = _scannerBroadcastService.scans.listen(
+      (barcode) {
+        if (!mounted || !_hardwareReaderActive) return;
+        context.read<ScannerProvider>().registerHardwareScan(barcode);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!mounted || !_hardwareReaderActive) return;
+        context
+            .read<ScannerProvider>()
+            .showFeedback('Erro no leitor físico: $error');
+      },
+    );
+  }
 
-    // Devices in "Input Method" output mode almost always append an Enter,
-    // which arrives via onSubmitted below. As a safety net for
-    // configurations that don't send one, if a big chunk of text lands in
-    // one go (an IME "commitText" call, not a human keystroke) and then
-    // nothing changes for a short beat, treat it as a completed scan.
-    final grew = text.length - _lastManualTextLength;
-    _lastManualTextLength = text.length;
-
-    if (_hardwareReaderActive && grew >= 4) {
-      _hardwareReaderDebounce = Timer(const Duration(milliseconds: 350), () {
-        if (_manualController.text.trim() == text.trim() && text.isNotEmpty) {
-          _addManual();
-        }
-      });
-    }
+  Future<void> _stopScannerBroadcastListener() async {
+    await _scannerSubscription?.cancel();
+    _scannerSubscription = null;
   }
 
   void _addManual() {
     final code = _manualController.text.trim();
-    if (code.isNotEmpty) {
-      if (_hardwareReaderActive) {
-        context.read<ScannerProvider>().registerHardwareScan(code);
-      } else {
-        context.read<ScannerProvider>().addItemToActiveList(code);
-      }
-      _manualController.clear();
-      _lastManualTextLength = 0;
-      if (_hardwareReaderActive) {
-        _requestManualFocus();
-      }
-    }
+    if (code.isEmpty || _hardwareReaderActive) return;
+
+    context.read<ScannerProvider>().addItemToActiveList(code);
+    _manualController.clear();
   }
 
   Future<void> _handleExport() async {
@@ -540,9 +518,9 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
                           const SizedBox(height: 12),
                         ],
 
-                        // Manual Entry Field (also the capture target for
-                        // hardware scanners using "Input Method" output,
-                        // like the M40-6761L10 - see the toggle button)
+                        // Manual entry remains available when the physical
+                        // reader is disabled. In physical-reader mode it is
+                        // deliberately read-only and cannot request focus.
                         Container(
                           padding: const EdgeInsets.all(6),
                           decoration: BoxDecoration(
@@ -595,11 +573,9 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
                                   child: TextField(
                                     controller: _manualController,
                                     focusNode: _manualFocusNode,
-                                    // Suppress the soft keyboard in physical-reader mode while
-                                     // retaining focus for keyboard-wedge scan input.
-                                     keyboardType: _hardwareReaderActive
-                                         ? TextInputType.none
-                                         : TextInputType.number,
+                                    readOnly: _hardwareReaderActive,
+                                    showCursor: !_hardwareReaderActive,
+                                    keyboardType: TextInputType.number,
                                     textInputAction: TextInputAction.done,
                                     style: const TextStyle(
                                       color: Colors.white,
@@ -616,7 +592,6 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
                                       ),
                                       border: InputBorder.none,
                                     ),
-                                    onChanged: _handleManualTextChanged,
                                     onSubmitted: (_) => _addManual(),
                                   ),
                                 ),
