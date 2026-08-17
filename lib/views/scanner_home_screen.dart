@@ -20,7 +20,7 @@ class ScannerHomeScreen extends StatefulWidget {
 }
 
 class _ScannerHomeScreenState extends State<ScannerHomeScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   final TextEditingController _manualController = TextEditingController();
   final FocusNode _manualFocusNode = FocusNode(debugLabel: 'ManualEntry');
   bool _showCollectionsModal = false;
@@ -30,6 +30,8 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
   // Physical reader mode uses the M40 scanner's Broadcast Output directly.
   // No TextField focus, keyboard emulation, or TextInput.hide is involved.
   bool _hardwareReaderActive = false;
+  String? _lastHardwareBarcode;
+  late final AnimationController _readerPulseController;
   StreamSubscription<String>? _scannerSubscription;
   final ScannerBroadcastService _scannerBroadcastService =
       ScannerBroadcastService();
@@ -38,12 +40,17 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _readerPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    );
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _scannerSubscription?.cancel();
+    _readerPulseController.dispose();
     _manualController.dispose();
     _manualFocusNode.dispose();
     super.dispose();
@@ -59,15 +66,19 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
     setState(() {
       _hardwareReaderActive = next;
       _manualFocusNode.canRequestFocus = !next;
+      if (!next) _lastHardwareBarcode = null;
     });
 
     if (next) {
+      _readerPulseController.repeat(reverse: true);
       _manualFocusNode.unfocus();
       _startScannerBroadcastListener();
       context.read<ScannerProvider>().showFeedback(
         'Leitor físico ativo — aponte e dispare (M40-6761L10)',
       );
     } else {
+      _readerPulseController.stop();
+      _readerPulseController.value = 0;
       _stopScannerBroadcastListener();
       _manualFocusNode.canRequestFocus = true;
       _manualFocusNode.unfocus();
@@ -80,6 +91,7 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
     _scannerSubscription = _scannerBroadcastService.scans.listen(
       (barcode) {
         if (!mounted || !_hardwareReaderActive) return;
+        setState(() => _lastHardwareBarcode = barcode);
         context.read<ScannerProvider>().registerHardwareScan(barcode);
       },
       onError: (Object error, StackTrace stackTrace) {
@@ -94,6 +106,193 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
   Future<void> _stopScannerBroadcastListener() async {
     await _scannerSubscription?.cancel();
     _scannerSubscription = null;
+  }
+
+  Widget _buildPhysicalReaderPanel() {
+    return AnimatedBuilder(
+      animation: _readerPulseController,
+      builder: (context, child) {
+        final pulse = _readerPulseController.value;
+        final glow = 0.10 + (pulse * 0.12);
+
+        return Container(
+          key: const ValueKey('physical-reader-mode'),
+          width: double.infinity,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                const Color(0xFFEC4899).withValues(alpha: 0.13),
+                const Color(0xFF9333EA).withValues(alpha: 0.10),
+                const Color(0xFF1F2937).withValues(alpha: 0.45),
+              ],
+            ),
+            border: Border.all(
+              color: const Color(0xFFEC4899).withValues(alpha: 0.42 + pulse * 0.25),
+              width: 1.2 + pulse * 0.8,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFEC4899).withValues(alpha: glow),
+                blurRadius: 24 + pulse * 10,
+                spreadRadius: pulse * 2,
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: const Color(0xFFEC4899).withValues(alpha: 0.16 + pulse * 0.10),
+                      border: Border.all(
+                        color: const Color(0xFFEC4899).withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: Center(
+                      child: Transform.scale(
+                        scale: 1.0 + pulse * 0.08,
+                        child: const FaIcon(
+                          FontAwesomeIcons.barcode,
+                          color: Color(0xFFF9A8D4),
+                          size: 22,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: const Color(0xFF34D399),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: const Color(0xFF34D399).withValues(alpha: 0.45 + pulse * 0.25),
+                                    blurRadius: 8 + pulse * 4,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'LEITOR FÍSICO ATIVO',
+                              style: TextStyle(
+                                color: Color(0xFFF9A8D4),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 1.4,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        const Text(
+                          'M40 • Broadcast Output',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: SizedBox(
+                  height: 3,
+                  child: Stack(
+                    children: [
+                      Container(color: Colors.white.withValues(alpha: 0.06)),
+                      FractionallySizedBox(
+                        widthFactor: 0.32 + pulse * 0.20,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFEC4899), Color(0xFFA855F7)],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFFEC4899).withValues(alpha: 0.55),
+                                blurRadius: 8,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: SizeTransition(
+                    sizeFactor: animation,
+                    axisAlignment: -1,
+                    child: child,
+                  ),
+                ),
+                child: _lastHardwareBarcode == null
+                    ? const Text(
+                        'Aguardando leitura…',
+                        key: ValueKey('waiting-for-scan'),
+                        style: TextStyle(
+                          color: Colors.white60,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      )
+                    : Row(
+                        key: ValueKey(_lastHardwareBarcode),
+                        children: [
+                          const FaIcon(
+                            FontAwesomeIcons.circleCheck,
+                            color: Color(0xFF34D399),
+                            size: 13,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Recebido: $_lastHardwareBarcode',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontFamily: 'monospace',
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   void _addManual() {
@@ -507,35 +706,80 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
                             ),
                           ],
                         ),
-                        const SizedBox(height: 20),                        // Camera preview is unnecessary while the physical
-                        // reader is active.
-                        if (!_hardwareReaderActive) ...[
-                          scanner_viewport.ScannerViewport(),
-                          const SizedBox(height: 12),
-
-                          // Dynamic Status Zone
-                          scanner_status.ScannerStatusZone(),
-                          const SizedBox(height: 12),
-                        ],
+                        const SizedBox(height: 20),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 420),
+                          reverseDuration: const Duration(milliseconds: 280),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          transitionBuilder: (child, animation) {
+                            final slide = Tween<Offset>(
+                              begin: const Offset(0, 0.08),
+                              end: Offset.zero,
+                            ).animate(animation);
+                            return FadeTransition(
+                              opacity: animation,
+                              child: SlideTransition(
+                                position: slide,
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: _hardwareReaderActive
+                              ? Column(
+                                  key: const ValueKey('physical-reader-mode-stack'),
+                                  children: [
+                                    _buildPhysicalReaderPanel(),
+                                    const SizedBox(height: 12),
+                                    // Keep the same status zone visible in
+                                    // physical-reader mode. The camera is
+                                    // removed, but status/feedback must not
+                                    // disappear with it.
+                                    const scanner_status.ScannerStatusZone(),
+                                    const SizedBox(height: 12),
+                                  ],
+                                )
+                              : Column(
+                                  key: const ValueKey('camera-mode'),
+                                  children: [
+                                    scanner_viewport.ScannerViewport(),
+                                    const SizedBox(height: 12),
+                                    scanner_status.ScannerStatusZone(),
+                                    const SizedBox(height: 12),
+                                  ],
+                                ),
+                        ),
 
                         // Manual entry remains available when the physical
                         // reader is disabled. In physical-reader mode it is
                         // deliberately read-only and cannot request focus.
-                        Container(
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 320),
+                          curve: Curves.easeOutCubic,
                           padding: const EdgeInsets.all(6),
                           decoration: BoxDecoration(
-                            color: const Color(
-                              0xFF1F2937,
-                            ).withValues(alpha: 0.4),
-                            borderRadius: BorderRadius.circular(20),
+                            color: _hardwareReaderActive
+                                ? const Color(0xFFEC4899).withValues(alpha: 0.08)
+                                : const Color(0xFF1F2937).withValues(alpha: 0.4),
+                            borderRadius: BorderRadius.circular(
+                              _hardwareReaderActive ? 24 : 20,
+                            ),
                             border: Border.all(
                               color: _hardwareReaderActive
-                                  ? const Color(0xFFEC4899)
-                                      .withValues(alpha: 0.6)
-                                  : const Color(
-                                      0xFF374151,
-                                    ).withValues(alpha: 0.5),
+                                  ? const Color(0xFFEC4899).withValues(alpha: 0.65)
+                                  : const Color(0xFF374151).withValues(alpha: 0.5),
+                              width: _hardwareReaderActive ? 1.4 : 1,
                             ),
+                            boxShadow: _hardwareReaderActive
+                                ? [
+                                    BoxShadow(
+                                      color: const Color(0xFFEC4899)
+                                          .withValues(alpha: 0.12),
+                                      blurRadius: 18,
+                                      spreadRadius: 1,
+                                    ),
+                                  ]
+                                : null,
                           ),
                           child: Row(
                             children: [
@@ -555,13 +799,22 @@ class _ScannerHomeScreenState extends State<ScannerHomeScreen>
                                           : const Color(0xFF374151),
                                       borderRadius: BorderRadius.circular(12),
                                     ),
-                                    child: Center(
-                                      child: FaIcon(
-                                        FontAwesomeIcons.microchip,
-                                        color: _hardwareReaderActive
-                                            ? Colors.white
-                                            : Colors.white70,
-                                        size: 14,
+                                    child: AnimatedScale(
+                                      scale: _hardwareReaderActive ? 1.08 : 1.0,
+                                      duration: const Duration(milliseconds: 260),
+                                      curve: Curves.easeOutBack,
+                                      child: AnimatedSwitcher(
+                                        duration: const Duration(milliseconds: 220),
+                                        child: FaIcon(
+                                          _hardwareReaderActive
+                                              ? FontAwesomeIcons.barcode
+                                              : FontAwesomeIcons.microchip,
+                                          key: ValueKey(_hardwareReaderActive),
+                                          color: _hardwareReaderActive
+                                              ? Colors.white
+                                              : Colors.white70,
+                                          size: 14,
+                                        ),
                                       ),
                                     ),
                                   ),
